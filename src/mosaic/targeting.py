@@ -1,5 +1,5 @@
 """
-Targeting — tune an ensemble's chain settings from its own runs.
+Targeting — tune a batch's chain settings from its own runs.
 
 Every run draws each tuned setting at random inside a band around its
 current centre. Every REFIT_EVERY runs (from FIRST_FIT) one regression of
@@ -94,7 +94,7 @@ class Targeter:
     rng: np.random.Generator
     warmup_runs: int = WARMUP_RUNS
     tail: bool = False       # aim at the best runs (quantile), not the average
-    # Only the fitting window is retained; the ensemble files hold every run.
+    # Only the fitting window is retained; the batch files hold every run.
     history: list[tuple[dict[str, float], float]] = field(default_factory=list)
     runs_observed: int = 0
 
@@ -133,8 +133,8 @@ class Targeter:
     def phase(self, run: int) -> str:
         return "warmup" if run <= self.warmup_runs else "learning"
 
-    def propose(self, run: int) -> dict[str, float]:
-        """Settings for run `run`: a random draw inside each band."""
+    def propose(self) -> dict[str, float]:
+        """Draw settings inside each band."""
         out = {}
         for k in self.knobs:
             t = self.rng.uniform(max(k.lo, k.center - k.half_band),
@@ -142,7 +142,7 @@ class Targeter:
             out[k.name] = k.to_value(t)
         return out
 
-    def observe(self, run: int, settings: dict[str, float], score: float,
+    def observe(self, settings: dict[str, float], score: float,
                 cancelled: Optional[Callable[[], bool]] = None) -> None:
         """Record a run; refit (and maybe move) on the schedule."""
         if not math.isfinite(score):
@@ -244,13 +244,6 @@ class Targeter:
             row["history"] = ", ".join(moves)
             rows.append(row)
         return rows
-
-    def status_lines(self, run: int = 0) -> list[str]:
-        """Plain-text status (logs, tests)."""
-        return [self.status_header()] + [
-            "  " + "  ".join(v for v in (r["label"] + " " + r["value"], r["effect"],
-                                          r["interval"], r["word"], r["history"]) if v)
-            for r in self.status_rows()]
 
     def summary(self) -> dict:
         """For the settings file: where each knob ended up."""

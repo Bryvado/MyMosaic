@@ -31,6 +31,8 @@ from typing import Optional
 
 import dearpygui.dearpygui as dpg
 
+MODAL_DIM = (204, 204, 204, 89)
+
 log = logging.getLogger("mosaic")
 
 
@@ -406,6 +408,7 @@ def _build_global_theme(p: Palette) -> int:
         # override for specific buttons.
         with dpg.theme_component(dpg.mvAll):
             # Surfaces
+            dpg.add_theme_color(dpg.mvThemeCol_ModalWindowDimBg, MODAL_DIM)
             dpg.add_theme_color(dpg.mvThemeCol_WindowBg, p.window_bg)
             dpg.add_theme_color(dpg.mvThemeCol_ChildBg, p.child_bg)
             dpg.add_theme_color(dpg.mvThemeCol_PopupBg, p.popup_bg)

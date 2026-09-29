@@ -1,6 +1,9 @@
 """Per-frame UI refresh: live plots, tables, and status labels."""
+from mosaic.gui.choice_radio import RADIO_HELP
+
 from ._common import (
     _CONTRIB_BAR_METRICS,
+    _PHASE_BANDS,
     _PLOT_LIMIT,
     _RENDER_TARGET,
     AlgorithmStatus,
@@ -172,7 +175,7 @@ class UpdatesMixin:
 
         # Display order: rows sorted by displayed label ascending. Labels are
         # 1..k for the default/geographic numbering but can be non-contiguous
-        # under "Infer from alignment" (reference numbers + fresh ids), so we
+        # under "Infer from reference plan" (reference numbers + fresh ids), so we
         # order by the label value rather than assuming label == row + 1.
         ordered_ds = [d for d, _ in sorted(d_to_label.items(),
                                            key=lambda kv: kv[1])]
@@ -329,6 +332,9 @@ class UpdatesMixin:
             if self.map_view is not None:
                 self.map_view.draw_blank()
                 self._update_map_preview()
+                with self.state._lock:
+                    if self.state.current_assignment is not None:
+                        self.state.map_needs_update = True
 
         self._tick_map_navigation()
 
@@ -526,6 +532,22 @@ class UpdatesMixin:
             self.theme.nudge_theme if can_revert else self.theme.antinudge_theme,
         )
 
+    def _set_chart_inactive(self, label, inactive):
+        """Compact empty chart windows, preserving the user's active height."""
+        dpg.configure_item(label, show=inactive)
+        saved = getattr(self, "_inactive_chart_heights", None)
+        if saved is None:
+            saved = self._inactive_chart_heights = {}
+        window = dpg.get_item_parent(label)
+        if inactive and window not in saved:
+            config = dpg.get_item_configuration(window)
+            saved[window] = dpg.get_item_height(window) or config.get("height", 336)
+            width = dpg.get_item_width(window) or config.get("width", 360)
+            dpg.configure_item(label, wrap=max(100, width - 28))
+            dpg.configure_item(window, height=110)
+        elif not inactive and window in saved:
+            dpg.configure_item(window, height=saved.pop(window))
+
     def _update_plots_and_panels(self) -> None:
         """Per-frame plot redraws and side panel refreshes."""
         # A read cursor past the end of a reset history yields an empty delta
@@ -557,6 +579,7 @@ class UpdatesMixin:
             _pvd  = list(self.state.pop_deviation_history[self._buf_popdev.read:])
             _pvd_max  = list(self.state.pop_dev_max_history[self._buf_popdev_max.read:])
             _pvd_mean = list(self.state.pop_dev_mean_history[self._buf_popdev_mean.read:])
+            _alpd = list(self.state.alignment_penalty_history[self._buf_align_penalty.read:])
             _almd = list(self.state.alignment_mean_ret_history[self._buf_align_mean.read:])
             _alnd = list(self.state.alignment_min_ret_history[self._buf_align_min.read:])
             _cutd = list(self.state.cut_edges_history[self._buf_cuts.read:])
@@ -627,6 +650,7 @@ class UpdatesMixin:
         self._buf_popdev.add(_pvd)
         self._buf_popdev_max.add(_pvd_max)
         self._buf_popdev_mean.add(_pvd_mean)
+        self._buf_align_penalty.add(_alpd)
         self._buf_align_mean.add(_almd)
         self._buf_align_min.add(_alnd)
         self._buf_cuts.add(_cutd)
@@ -640,6 +664,7 @@ class UpdatesMixin:
         def _render(buf: _SeriesBuffer, series_tag: str, x_tag: str, y_tag: str,
                     fit_y: bool = True) -> None:
             if not buf.ys:
+                dpg.set_value(series_tag, [[], []])
                 return
             total = len(buf.ys)
             n = min(total, _PLOT_LIMIT) if limit else total   # == len(plot_data)
@@ -689,6 +714,24 @@ class UpdatesMixin:
             if fit_y:
                 dpg.fit_axis_data(y_tag)
 
+        def _render_county_counts(excess_series, count_series, ceiling_series, x_axis, y_axis):
+            buffers = (self._buf_cs_excess, self._buf_cs_clean)
+            for buf, series in zip(buffers, (excess_series, count_series)):
+                _render(buf, series, x_axis, y_axis, fit_y=False)
+            hi = max((max(buf.plot_data(limit)[1], default=0.0) for buf in buffers), default=0.0)
+            if self._buf_cs_clean.ys:
+                target = (self._buf_cs_score.ys[-1] / 10.0
+                          - self._buf_cs_excess.ys[-1] + self._buf_cs_clean.ys[-1])
+                xs, _ = self._buf_cs_clean.plot_data(limit)
+                span = max(1.0, xs[-1] - xs[0])
+                starts = xs[0] + np.arange(32) * span / 32
+                dash_x = np.column_stack((starts, starts + span / 64)).ravel().tolist()
+                dpg.set_value(ceiling_series, [dash_x, [target] * len(dash_x)])
+                hi = max(hi, target)
+            else:
+                dpg.set_value(ceiling_series, [[], []])
+            dpg.set_axis_limits(y_axis, 0.0, hi + max(1.0, hi * 0.05))
+
         _render(self._buf_score, "score_series", "score_x", "score_y")
         _render(self._buf_acc,   "acc_series",   "acc_x",   "acc_y")
 
@@ -698,65 +741,41 @@ class UpdatesMixin:
         cs_on = dpg.get_value(self._cs_enabled)
         if dpg.is_item_shown("panel_county_splits"):
             dpg.configure_item("cs_charts_grp",   show=cs_on)
-            dpg.configure_item("cs_inactive_lbl", show=not cs_on)
+            self._set_chart_inactive("cs_inactive_lbl", not cs_on)
             if cs_on:
-                _render(self._buf_cs_excess, "cs_excess_series", "cs_excess_x", "cs_excess_y")
-                _render(self._buf_cs_clean,  "cs_clean_series",  "cs_clean_x",  "cs_clean_y")
-                if self._buf_cs_excess.ys:
-                    _, w = self._buf_cs_excess.plot_data(limit)
-                    hi = max(1, int(max(w)))
-                    dpg.set_axis_limits("cs_excess_y", 0, hi + 1)
-            max_clean = None
-            if (self.runner is not None and self.runner.county_pops is not None
-                    and self.runner.populations is not None):
-                n_dist = dpg.get_value(self._num_districts)
-                tol = dpg.get_value(self._tolerance) / 100.0
-                ideal_pop = float(self.runner.populations.sum()) / n_dist if n_dist > 0 else 1.0
-                min_dp = max(ideal_pop * (1.0 - tol), 1.0)
-                max_clean = int(np.floor(self.runner.county_pops / min_dp).sum())
-                dpg.set_value("cs_max_clean_note",
-                              f"Maximum feasible single-county districts: {max_clean:,}")
-            if cs_on and self._buf_cs_clean.ys:
-                xs, w = self._buf_cs_clean.plot_data(limit)
-                hi = int(max(w))
-                if max_clean is not None:
-                    hi = max(hi, max_clean)
-                dpg.set_axis_limits("cs_clean_y", 0, hi + 1)
-                # Horizontal reference line spanning the current x-range.
-                if max_clean is not None and xs:
-                    dpg.set_value("cs_clean_max",
-                                  [[xs[0], xs[-1]], [max_clean, max_clean]])
+                _render_county_counts("cs_excess_series", "cs_clean_series", "cs_clean_max",
+                                      "cs_excess_x", "cs_excess_y")
 
         pp_on    = dpg.get_value(self._pp_enabled)
 
         if dpg.is_item_shown("panel_mm"):
             dpg.configure_item("mm_plot_grp",     show=self._has_elections)
-            dpg.configure_item("mm_inactive_lbl", show=not self._has_elections)
+            self._set_chart_inactive("mm_inactive_lbl", not self._has_elections)
             if self._has_elections:
                 _render(self._buf_mm, "mm_series", "mm_x", "mm_y")
         if dpg.is_item_shown("panel_eg"):
             dpg.configure_item("eg_plot_grp",     show=self._has_elections)
-            dpg.configure_item("eg_inactive_lbl", show=not self._has_elections)
+            self._set_chart_inactive("eg_inactive_lbl", not self._has_elections)
             if self._has_elections:
                 _render(self._buf_eg, "eg_series", "eg_x", "eg_y")
         if dpg.is_item_shown("panel_pb"):
             dpg.configure_item("pb_plot_grp",     show=self._has_elections)
-            dpg.configure_item("pb_inactive_lbl", show=not self._has_elections)
+            self._set_chart_inactive("pb_inactive_lbl", not self._has_elections)
             if self._has_elections:
                 _render(self._buf_pb, "pb_series", "pb_x", "pb_y")
         if dpg.is_item_shown("panel_pg"):
             dpg.configure_item("pg_plot_grp",     show=self._has_elections)
-            dpg.configure_item("pg_inactive_lbl", show=not self._has_elections)
+            self._set_chart_inactive("pg_inactive_lbl", not self._has_elections)
             if self._has_elections:
                 _render(self._buf_pg, "pg_series", "pg_x", "pg_y", fit_y=False)
         if dpg.is_item_shown("panel_dem_seats"):
             dpg.configure_item("seats_plot_grp",     show=self._has_elections)
-            dpg.configure_item("seats_inactive_lbl", show=not self._has_elections)
+            self._set_chart_inactive("seats_inactive_lbl", not self._has_elections)
             if self._has_elections:
                 _render(self._buf_seats, "seats_series", "seats_x", "seats_y")
         if dpg.is_item_shown("panel_majority"):
             dpg.configure_item("majority_plot_grp",     show=self._has_elections)
-            dpg.configure_item("majority_inactive_lbl", show=not self._has_elections)
+            self._set_chart_inactive("majority_inactive_lbl", not self._has_elections)
             if self._has_elections:
                 _render(self._buf_maj_dem, "maj_dem_series", "maj_x", "maj_y", fit_y=False)
                 _render(self._buf_maj_rep, "maj_rep_series", "maj_x", "maj_y", fit_y=False)
@@ -765,7 +784,7 @@ class UpdatesMixin:
             # score enabled); otherwise it charts against a stale default.
             hinge_active = self._has_elections and dpg.get_value(self._hinge_enabled)
             dpg.configure_item("hinge_plot_grp",     show=hinge_active)
-            dpg.configure_item("hinge_inactive_lbl", show=not hinge_active)
+            self._set_chart_inactive("hinge_inactive_lbl", not hinge_active)
             if not hinge_active:
                 dpg.set_value(
                     "hinge_inactive_lbl",
@@ -776,19 +795,19 @@ class UpdatesMixin:
                 _render(self._buf_hinge, "hinge_series", "hinge_x", "hinge_y", fit_y=False)
         if dpg.is_item_shown("panel_pp"):
             dpg.configure_item("pp_plot_grp",     show=pp_on)
-            dpg.configure_item("pp_inactive_lbl", show=not pp_on)
+            self._set_chart_inactive("pp_inactive_lbl", not pp_on)
             if pp_on:
                 _render(self._buf_pp, "pp_series", "pp_x", "pp_y")
         if dpg.is_item_shown("panel_reock"):
             reock_on = dpg.get_value(self._reock_enabled)
             dpg.configure_item("reock_plot_grp",     show=reock_on)
-            dpg.configure_item("reock_inactive_lbl", show=not reock_on)
+            self._set_chart_inactive("reock_inactive_lbl", not reock_on)
             if reock_on:
                 _render(self._buf_reock, "reock_series", "reock_x", "reock_y")
         if dpg.is_item_shown("panel_representation"):
             repr_on = dpg.get_value(self._representation_enabled)
             dpg.configure_item("representation_plot_grp",     show=repr_on)
-            dpg.configure_item("representation_inactive_lbl", show=not repr_on)
+            self._set_chart_inactive("representation_inactive_lbl", not repr_on)
             if not repr_on:
                 dpg.set_value("representation_inactive_lbl",
                               _race_panel_msg(self, "representation"))
@@ -796,24 +815,47 @@ class UpdatesMixin:
                 mode = dpg.get_value(self._rep_chart_mode)
                 overall = mode == "Overall"
                 seats = mode == "Opportunity count"
+                target_hi = 0.0
+                active_groups = set()
+                for group, buf in (("black", self._buf_rep_black_seats),
+                                   ("latino", self._buf_rep_latino_seats),
+                                   ("asian", self._buf_rep_asian_seats)):
+                    tag = f"representation_{group}_target_series"
+                    target = self.state.opportunity_targets.get(group, {})
+                    provided = self.state.race_groups_provided
+                    value = int(round(target.get("ceiling", 0.0)))
+                    applicable = ((not provided or group in provided)
+                                  and target.get("target", 0) >= 1
+                                  and bool(target.get("feasible", False)))
+                    if applicable:
+                        active_groups.add(group)
+                    dpg.configure_item(f"representation_{group}_series",
+                                       show=not overall and applicable)
+                    visible = seats and applicable and value > 0 and bool(buf.xs)
+                    dpg.configure_item(tag, show=visible)
+                    if visible:
+                        xs, _ = buf.plot_data(limit)
+                        span = max(1.0, xs[-1] - xs[0])
+                        starts = xs[0] + np.arange(32) * span / 32
+                        dash_x = np.column_stack((starts, starts + span / 64)).ravel().tolist()
+                        dpg.set_value(tag, [dash_x, [value] * len(dash_x)])
+                        target_hi = max(target_hi, value)
+                    else:
+                        dpg.set_value(tag, [[], []])
                 dpg.configure_item("representation_overall_series", show=overall)
-                for _s in ("representation_black_series", "representation_latino_series",
-                           "representation_asian_series"):
-                    dpg.configure_item(_s, show=not overall)
                 if mode != getattr(self, "_rep_mode", None):
                     self._rep_mode = mode
+                    dpg.set_value("representation_chart_help", RADIO_HELP["opportunity"][mode])
                     if overall:
                         dpg.configure_item("representation_y", label="Penalty (0 = best)")
-                        dpg.set_axis_limits("representation_y", -4.0, 104.0)
+                        dpg.set_axis_limits("representation_y", 0.0, 100.0)
                     elif seats:
                         dpg.configure_item("representation_y",
                                            label="Opportunity count")
                     else:
                         dpg.configure_item("representation_y",
                                            label="Rating (100 = proportional)")
-                        # Pad past 0-100 so a line pinned to 100 or 0 stays
-                        # inside the frame instead of clipped on the border.
-                        dpg.set_axis_limits("representation_y", -4.0, 104.0)
+                        dpg.set_axis_limits("representation_y", 0.0, 100.0)
                 if overall:
                     # The combined penalty actually minimized in annealing.
                     _render(self._buf_rep_overall, "representation_overall_series",
@@ -834,11 +876,11 @@ class UpdatesMixin:
                         # headroom.  Seats top out at the district count, so the
                         # fixed 0-100 rating scale would bury the lines at the
                         # bottom.
-                        hi = 0.0
-                        for _b in bufs:
-                            if _b.ys:
+                        hi = target_hi
+                        for group, _b in zip(("black", "latino", "asian"), bufs):
+                            if group in active_groups and _b.ys:
                                 hi = max(hi, max(_b.plot_data(limit)[1]))
-                        dpg.set_axis_limits("representation_y", 0.0, hi * 1.15 + 0.5)
+                        dpg.set_axis_limits("representation_y", 0.0, hi + max(0.1, hi * 0.05))
         if dpg.is_item_shown("popup_representation"):
             # Targets are run-constant, so rebuild the text only when they change
             # rather than every frame the popup happens to be open.
@@ -857,7 +899,7 @@ class UpdatesMixin:
         if dpg.is_item_shown("panel_minority_cohesion"):
             mc_on = dpg.get_value(self._minority_cohesion_enabled)
             dpg.configure_item("minority_cohesion_plot_grp", show=mc_on)
-            dpg.configure_item("minority_cohesion_inactive_lbl", show=not mc_on)
+            self._set_chart_inactive("minority_cohesion_inactive_lbl", not mc_on)
             if not mc_on:
                 dpg.set_value("minority_cohesion_inactive_lbl",
                               _race_panel_msg(self, "minority_cohesion"))
@@ -870,6 +912,8 @@ class UpdatesMixin:
                     dpg.configure_item(_s, show=not overall)
                 if overall != getattr(self, "_coh_overall_mode", None):
                     self._coh_overall_mode = overall
+                    dpg.set_value("minority_cohesion_chart_help",
+                                  RADIO_HELP["severance"]["Overall" if overall else "By group"])
                     dpg.configure_item(
                         "minority_cohesion_y",
                         label="Penalty (0 = best)" if overall else "Neighborhood intact (%)")
@@ -888,7 +932,7 @@ class UpdatesMixin:
         if dpg.is_item_shown("panel_community_congruence"):
             cc_on = dpg.get_value(self._community_congruence_enabled)
             dpg.configure_item("community_congruence_plot_grp", show=cc_on)
-            dpg.configure_item("community_congruence_inactive_lbl", show=not cc_on)
+            self._set_chart_inactive("community_congruence_inactive_lbl", not cc_on)
             if not cc_on:
                 dpg.set_value("community_congruence_inactive_lbl",
                               _race_panel_msg(self, "community_congruence"))
@@ -901,10 +945,12 @@ class UpdatesMixin:
                     dpg.configure_item(_s, show=not overall)
                 if overall != getattr(self, "_cong_overall_mode", None):
                     self._cong_overall_mode = overall
+                    dpg.set_value("community_congruence_chart_help",
+                                  RADIO_HELP["dispersion"]["Overall" if overall else "By group"])
                     dpg.configure_item(
                         "community_congruence_y",
                         label="Penalty (0 = best)" if overall else "Congruence (%)")
-                    dpg.set_axis_limits("community_congruence_y", -4.0, 104.0)
+                    dpg.set_axis_limits("community_congruence_y", 0.0, 100.0)
                 if overall:
                     # The combined penalty actually minimized in annealing.
                     _render(self._buf_cong_overall,
@@ -924,29 +970,37 @@ class UpdatesMixin:
         if dpg.is_item_shown("panel_hc"):
             hc_on = dpg.get_value(self._hc_enabled)
             dpg.configure_item("hc_plot_grp",     show=hc_on)
-            dpg.configure_item("hc_inactive_lbl", show=not hc_on)
+            self._set_chart_inactive("hc_inactive_lbl", not hc_on)
             if hc_on:
                 _render(self._buf_hc, "hc_series", "hc_x", "hc_y")
         if dpg.is_item_shown("panel_hsplit"):
             hs_on = dpg.get_value(self._hsplit_enabled)
             dpg.configure_item("hsplit_plot_grp",     show=hs_on)
-            dpg.configure_item("hsplit_inactive_lbl", show=not hs_on)
+            self._set_chart_inactive("hsplit_inactive_lbl", not hs_on)
             if hs_on:
-                # Floor the y-axis at 0 (penalty >= 0); auto-fit only the top.
-                _render(self._buf_hsplit, "hsplit_series", "hsplit_x", "hsplit_y",
-                        fit_y=False)
-                if self._buf_hsplit.ys:
-                    hi = max(self._buf_hsplit.ys)
-                    dpg.set_axis_limits("hsplit_y", 0.0, hi * 1.05 + 1e-6)
+                counts = dpg.get_value(self._hsplit_chart_mode) == "Counts"
+                dpg.configure_item("hsplit_series", show=not counts)
+                dpg.configure_item("hsplit_excess_series", show=counts)
+                dpg.configure_item("hsplit_scd_series", show=counts)
+                dpg.configure_item("hsplit_target_series", show=counts)
+                dpg.configure_item("hsplit_y", label="Count" if counts else "Penalty (0 = best)")
+                if counts:
+                    _render_county_counts("hsplit_excess_series", "hsplit_scd_series",
+                                          "hsplit_target_series", "hsplit_x", "hsplit_y")
+                else:
+                    _render(self._buf_hsplit, "hsplit_series", "hsplit_x", "hsplit_y",
+                            fit_y=False)
+                    hi = max(self._buf_hsplit.plot_data(limit)[1], default=0.0)
+                    dpg.set_axis_limits("hsplit_y", 0.0, hi + max(0.01, hi * 0.05))
         if dpg.is_item_shown("panel_hprop"):
             dpg.configure_item("hprop_plot_grp",     show=self._has_elections)
-            dpg.configure_item("hprop_inactive_lbl", show=not self._has_elections)
+            self._set_chart_inactive("hprop_inactive_lbl", not self._has_elections)
             if self._has_elections:
                 _render(self._buf_hprop, "hprop_series", "hprop_x", "hprop_y")
                 _render(self._buf_inversion, "hprop_inversion_series", "hprop_x", "hprop_y")
         if dpg.is_item_shown("panel_hcmp"):
             dpg.configure_item("hcmp_plot_grp",     show=self._has_elections)
-            dpg.configure_item("hcmp_inactive_lbl", show=not self._has_elections)
+            self._set_chart_inactive("hcmp_inactive_lbl", not self._has_elections)
             if self._has_elections:
                 _render(self._buf_hcmp, "hcmp_series", "hcmp_x", "hcmp_y")
         if dpg.is_item_shown("panel_popdev"):
@@ -955,7 +1009,7 @@ class UpdatesMixin:
             popdev_on = (dpg.get_value(self._popdev_enabled)
                          or dpg.get_value(self._tolerance_ratchet_mode) != "Off")
             dpg.configure_item("popdev_plot_grp",     show=popdev_on)
-            dpg.configure_item("popdev_inactive_lbl", show=not popdev_on)
+            self._set_chart_inactive("popdev_inactive_lbl", not popdev_on)
             if popdev_on:
                 _render(self._buf_popdev_max,  "popdev_max_series",  "popdev_x", "popdev_y")
                 _render(self._buf_popdev_mean, "popdev_mean_series", "popdev_x", "popdev_y")
@@ -967,14 +1021,19 @@ class UpdatesMixin:
             align_on = (dpg.get_value(self._alignment_enabled)
                         and self.runner is not None
                         and self.runner.alignment_data is not None)
-            dpg.configure_item("alignment_plot_grp",     show=align_on)
-            dpg.configure_item("alignment_inactive_lbl", show=not align_on)
+            values = dpg.get_value(self._alignment_chart_mode) == "Districts"
+            dpg.configure_item("alignment_plot_grp", show=align_on and not values)
+            self._set_chart_inactive("alignment_inactive_lbl", not align_on)
+            dpg.configure_item("alignment_values_plot_grp", show=align_on and values)
             if align_on:
+                _render(self._buf_align_penalty, "alignment_penalty_series",
+                        "alignment_x", "alignment_y")
                 _render(self._buf_align_mean, "alignment_mean_series",
-                        "alignment_x", "alignment_y")
+                        "alignment_values_x", "alignment_value_y")
                 _render(self._buf_align_min, "alignment_min_series",
-                        "alignment_x", "alignment_y")
+                        "alignment_values_x", "alignment_value_y")
                 dpg.set_axis_limits("alignment_y", 0.0, 100.0)
+                dpg.set_axis_limits("alignment_value_y", 0.0, 100.0)
         if dpg.is_item_shown("panel_cut_edges"):
             _render(self._buf_cuts, "cuts_series", "cuts_x", "cuts_y")
 
@@ -1112,7 +1171,7 @@ class UpdatesMixin:
             self._buf_hsplit, self._buf_hprop, self._buf_hcmp,
             self._buf_popdev,
             self._buf_popdev_max, self._buf_popdev_mean, self._buf_cuts,
-            self._buf_align_mean, self._buf_align_min,
+            self._buf_align_penalty, self._buf_align_mean, self._buf_align_min,
             self._buf_maj_dem, self._buf_maj_rep, self._buf_hinge,
             self._buf_inversion,
             self._buf_rep_black, self._buf_rep_latino, self._buf_rep_asian,
@@ -1129,12 +1188,18 @@ class UpdatesMixin:
             "mm_series", "eg_series", "seats_series",
             "pb_series", "pg_series",
             "pp_series", "reock_series",
+            "hc_series", "hsplit_series", "hprop_series", "hprop_inversion_series",
+            "hsplit_excess_series", "hsplit_scd_series",
+            "hsplit_target_series",
+            "hcmp_series", "cs_clean_max", "partisan_median", "win_chance_median",
             "popdev_max_series", "popdev_mean_series", "cuts_series",
-            "alignment_mean_series", "alignment_min_series",
+            "alignment_penalty_series", "alignment_mean_series", "alignment_min_series",
             "maj_dem_series", "maj_rep_series", "hinge_series",
             "representation_black_series",
             "representation_latino_series",
             "representation_asian_series",
+            "representation_black_target_series", "representation_latino_target_series",
+            "representation_asian_target_series",
             "minority_cohesion_black_series",
             "minority_cohesion_latino_series",
             "minority_cohesion_asian_series",
@@ -1150,12 +1215,17 @@ class UpdatesMixin:
             "score_x", "score_y", "acc_x", "acc_y",
             "panel_temp_x", "panel_temp_y",
             "cs_excess_x", "cs_excess_y",
-            "cs_clean_x", "cs_clean_y",
             "mm_x", "mm_y", "eg_x", "eg_y",
             "pb_x", "pb_y", "pg_x", "pg_y",
             "seats_x", "seats_y",
             "pp_x", "pp_y", "popdev_x", "popdev_y", "cuts_x", "cuts_y",
-            "alignment_x", "alignment_y",
+            "reock_x", "reock_y", "hc_x", "hc_y", "hsplit_x", "hsplit_y",
+            "hprop_x", "hprop_y", "hcmp_x", "hcmp_y",
+            "representation_x", "representation_y",
+            "minority_cohesion_x", "minority_cohesion_y",
+            "community_congruence_x", "community_congruence_y",
+            "partisan_x", "win_chance_x",
+            "alignment_x", "alignment_y", "alignment_value_y", "alignment_values_x",
             "maj_x", "maj_y", "hinge_x", "hinge_y",
         ):
             dpg.set_axis_limits_auto(ax)
@@ -1168,7 +1238,19 @@ class UpdatesMixin:
         dpg.set_axis_limits("hinge_y",  0.0, 100.0)
         dpg.set_axis_limits("popdev_y", 0.0, 5.0)
         dpg.set_axis_limits("alignment_y", 0.0, 100.0)
+        dpg.set_axis_limits("alignment_value_y", 0.0, 100.0)
         dpg.set_axis_limits("pg_y", 0.0, 100.0)
+        for ax in ("reock_y", "hc_y", "hprop_y", "hcmp_y"):
+            dpg.set_axis_limits(ax, 0.0, 100.0)
+        for ax in ("representation_y", "community_congruence_y"):
+            dpg.set_axis_limits(ax, 0.0, 100.0)
+        dpg.set_axis_limits("minority_cohesion_y", -4.0, 104.0)
+        self._rep_mode = None
+        self._phase_prev_n = 0
+        self._phase_lim = None
+        for k in range(_PHASE_BANDS):
+            dpg.set_value(f"phase_band_{k}", empty)
+        dpg.set_value("phase_head", empty)
         for s in self._partisan_bar_series:
             dpg.set_value(s, empty)
         for s in self._win_chance_bar_series:

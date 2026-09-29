@@ -13,7 +13,11 @@ from typing import Optional
 import numpy as np
 from scipy.special import ndtr
 
-from mosaic.scoring.alignment import score_alignment
+from mosaic.scoring.alignment import (
+    alignment_ceiling_for_config,
+    alignment_inputs,
+    score_alignment,
+)
 from mosaic.scoring.community_congruence import score_community_congruence
 
 # Module-scope scorer imports: nothing imports score.py back, so lazy
@@ -94,9 +98,6 @@ class ScoreConfig:
     # independent of election data)
     weight_representation: float = 0.0
     representation_unclipped: bool = True    # smoothed cap (gradient) vs hard scorecard
-    # Passed through to representation_from_opportunity; only the proportional
-    # form is currently implemented.
-    representation_mode: str = "proportional"
     weight_minority_cohesion: float = 0.0    # keep minority neighborhoods intact
     weight_community_congruence: float = 0.0  # keep minority communities whole
     opportunity_midpoint: float = 0.44       # logistic center on group share
@@ -119,7 +120,7 @@ class PlanScore:
     pop_deviation: float = 0.0          # sum squared excess dev × 100,000 / n_districts
     pop_dev_max: float = 0.0            # max |deviation| as % (display only)
     pop_dev_mean: float = 0.0           # mean |deviation| as % (display only)
-    alignment: float = 0.0             # 100 * weighted mean (1 - cohesion) penalty
+    alignment: float = 0.0             # population-ceiling-normalized continuity penalty
     alignment_mean_ret: float = 0.0    # mean district cohesion as % (display only)
     alignment_min_ret: float = 0.0     # worst-district cohesion as % (display only)
     county_excess_splits: int = 0
@@ -168,6 +169,7 @@ def score_plan(
     pp_data: Optional[PPData] = None,
     reock_data: Optional[ReockData] = None,
     alignment_data=None,
+    alignment_ceiling: Optional[float] = None,
     county_data=None,
     n_districts: Optional[int] = None,
     dem_votes: Optional[np.ndarray] = None,
@@ -225,13 +227,14 @@ def score_plan(
             assignment, county_ids, n_districts, county_data,
         )
 
-    if (config.weight_county_excess or config.weight_county_unified) \
+    if _need_cxd \
             and assignment is not None \
             and county_ids is not None and populations is not None \
-            and ideal_pop is not None and n_districts is not None:
+            and n_districts is not None:
         cs_excess_score, cs_unified_score, cs_excess, cs_unified = score_county_splits(
-            assignment, county_ids, populations, ideal_pop,
-            tolerance or 0.05, n_districts,
+            assignment, county_ids, populations,
+            ideal_pop if ideal_pop is not None else float(populations.sum()) / n_districts,
+            tolerance if tolerance is not None else 0.05, n_districts,
             county_data=county_data, co_di_pop=_co_di_pop,
         )
         total += config.weight_county_excess * cs_excess_score
@@ -245,6 +248,8 @@ def score_plan(
             county_data=county_data, co_di_pop=_co_di_pop,
             unclipped=config.holistic_splitting_unclipped,
         )
+        # Classic scales each count by ten; Congruence adds one point per defect.
+        hsplit_raw += cs_excess + max(0.0, cs_unified_score / 10.0)
         total += config.weight_holistic_splitting * hsplit_raw
 
     # PP and Reock are feeders for Holistic Compactness; compute when either
@@ -289,32 +294,14 @@ def score_plan(
     if config.weight_alignment and assignment is not None \
             and alignment_data is not None and populations is not None \
             and n_districts is not None:
-        # Measure retention in a party's votes when that focus is selected and
-        # the party's per-precinct votes are present; otherwise use population.
-        focus = config.alignment_party_focus
-        if focus == "rep" and gop_votes is not None:
-            align_weights = gop_votes
-        elif focus == "dem" and dem_votes is not None:
-            align_weights = dem_votes
-        else:
-            focus = "none"
-            align_weights = populations
-
-        # Optionally restrict scoring to reference districts the focus party
-        # "wins" (two-party share > threshold). Uses the reference's own
-        # per-district totals cached at load, so the set stays frozen to the
-        # reference plan as the proposed map evolves.
-        align_mask = None
-        if config.alignment_restrict_to_party and focus in ("rep", "dem") \
-                and alignment_data.alt_dem_by_district is not None \
-                and alignment_data.alt_gop_by_district is not None:
-            dd = alignment_data.alt_dem_by_district
-            gg = alignment_data.alt_gop_by_district
-            tot = dd + gg
-            party_v = gg if focus == "rep" else dd
-            with np.errstate(invalid="ignore", divide="ignore"):
-                share = np.where(tot > 0, party_v / tot, 0.0)
-            align_mask = share > config.alignment_win_threshold
+        align_weights, align_mask = alignment_inputs(
+            alignment_data, config, populations, dem_votes, gop_votes,
+        )
+        if alignment_ceiling is None:
+            alignment_ceiling = alignment_ceiling_for_config(
+                alignment_data, config, populations, n_districts,
+                tolerance if tolerance is not None else 0.0, dem_votes, gop_votes,
+            )
 
         align_raw, align_mean_ret, align_min_ret = score_alignment(
             assignment,
@@ -324,6 +311,7 @@ def score_plan(
             n_districts,
             district_mask=align_mask,
             return_components=True,
+            ceiling=alignment_ceiling,
         )
         total += config.weight_alignment * align_raw
 
@@ -502,7 +490,7 @@ def score_plan(
             _prepared=_opportunity_prep,
         )
         rep_rating, rep_pen, _rr, _reff = representation_from_opportunity(
-            _opp, mode=config.representation_mode,
+            _opp,
             unclipped=config.representation_unclipped,
         )
         opp_black, opp_latino, opp_asian = _reff["black"], _reff["latino"], _reff["asian"]

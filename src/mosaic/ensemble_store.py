@@ -1,4 +1,4 @@
-"""Disk-backed completed runs and bounded-memory queries for ensemble views."""
+"""Disk-backed completed runs and bounded-memory queries for batch views."""
 from __future__ import annotations
 
 import csv
@@ -64,7 +64,7 @@ class RunSequence(Sequence):
 class EnsembleStore:
     def __init__(self, path, columns, precinct_count):
         self.path = path
-        self.binary_path = path.with_name('ensemble_assignments.bin')
+        self.binary_path = path.with_name('batch_assignments.bin')
         self.binary_path.touch(exist_ok=False)
         self.precinct_count = precinct_count
         self.count = 0
@@ -88,7 +88,7 @@ class EnsembleStore:
             db.execute('PRAGMA temp_store=FILE')
             db.create_aggregate('moments', 1, _Moments)
             db.create_function('shown', 3, lambda v, scale, places:
-                               float(np.round(v * scale, places)) if v is not None else None)
+                               round(float(v) * scale, places) if v is not None else None)
             yield db
             db.commit()
         finally:
@@ -96,7 +96,7 @@ class EnsembleStore:
 
     def add(self, run_id, districts, row):
         if districts.shape != (self.precinct_count,):
-            raise ValueError('Assignment length does not match the ensemble map')
+            raise ValueError('Assignment length does not match the batch map')
         values = []
         for col in self.fields:
             value = row.get(col)
@@ -117,7 +117,7 @@ class EnsembleStore:
             binary.seek(offset)
             data = binary.read(self.precinct_count * 4)
         if len(data) != self.precinct_count * 4:
-            raise OSError('Incomplete ensemble assignment file')
+            raise OSError('Incomplete batch assignment file')
         return np.frombuffer(data, dtype='<i4').copy()
 
     def best_run(self):
@@ -125,6 +125,13 @@ class EnsembleStore:
         with self.connect() as db:
             row = db.execute(f'SELECT run_id FROM runs WHERE {col} IS NOT NULL AND seq<=? '
                              f'ORDER BY {col}, seq LIMIT 1', (self.count,)).fetchone()
+        return row[0] if row else None
+
+    def run_position(self, run_id):
+        """One-based saved position; run IDs need not finish in numeric order."""
+        with self.connect() as db:
+            row = db.execute('SELECT seq FROM runs WHERE run_id=? AND seq<=?',
+                             (run_id, self.count)).fetchone()
         return row[0] if row else None
 
     def bounds(self, col, scale=1, places=2, count=None):
@@ -136,7 +143,7 @@ class EnsembleStore:
                                 (self.count if count is None else count,)).fetchone()
         if lo is None:
             return (0.0, 1.0)
-        return float(np.round(lo * scale, places)), float(np.round(hi * scale, places))
+        return round(float(lo) * scale, places), round(float(hi) * scale, places)
 
     def histogram(self, col, max_bins=40, count=None):
         field = self.fields.get(col)
@@ -231,7 +238,7 @@ class EnsembleStore:
                     where.append(f'shown({field}, ?, ?) {op} ?')
                     args.extend((scale, places, value))
         clause = ' AND '.join(where)
-        field = self.fields.get(sort_col, 'seq')
+        field = self.fields.get(sort_col, 'CAST(SUBSTR(run_id, 5) AS INTEGER)')
         sort_args = []
         for col, _, _, _, _, scale, places in criteria:
             if col == sort_col:
@@ -276,7 +283,7 @@ class EnsembleStore:
                         binary.seek((i * self.precinct_count + start) * 4)
                         blob = binary.read(height * 4)
                         if len(blob) != height * 4:
-                            raise OSError('Incomplete ensemble assignment file')
+                            raise OSError('Incomplete batch assignment file')
                         tile[i] = np.frombuffer(blob, dtype='<i4')
                     for j in range(height):
                         cell.seek(0)
@@ -296,6 +303,6 @@ class EnsembleStore:
                         binary.seek((i * self.precinct_count + start) * 4)
                         blob = binary.read(4)
                         if len(blob) != 4:
-                            raise OSError('Incomplete ensemble assignment file')
+                            raise OSError('Incomplete batch assignment file')
                         out.write(',' + str(int.from_bytes(blob, 'little', signed=True)))
                     out.write('\n')

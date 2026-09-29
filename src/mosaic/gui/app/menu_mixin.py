@@ -281,7 +281,7 @@ class MenuMixin:
         ("pop_deviation", "_popdev_enabled", "_on_popdev_score_toggle",
          "_svis_popdev", "score_row_popdev", "Population Deviation"),
         ("alignment", "_alignment_enabled", "_on_alignment_toggle",
-         "_svis_alignment", "score_row_alignment", "Alignment"),
+         "_svis_alignment", "score_row_alignment", "Plan Continuity"),
         ("mean_median", "_mm_enabled", "_on_mm_toggle",
          "_svis_mm", "score_row_mm", "Mean-Median"),
         ("efficiency_gap", "_eg_enabled", "_on_eg_toggle",
@@ -395,12 +395,8 @@ class MenuMixin:
 
     @staticmethod
     def _preset_set(item, value) -> None:
-        """set_value, clamped to a slider's range and cast to its type."""
+        """Restore validated values, preserving custom values beyond drag ranges."""
         if isinstance(value, (int, float)) and not isinstance(value, bool):
-            cfg = dpg.get_item_configuration(item)
-            lo, hi = cfg.get("min_value"), cfg.get("max_value")
-            if lo is not None and hi is not None:
-                value = min(max(value, lo), hi)
             if dpg.get_item_type(item).endswith("SliderInt"):
                 value = int(round(value))
         dpg.set_value(item, value)
@@ -428,6 +424,7 @@ class MenuMixin:
                       and p["alignment"]["party_focus"] != "none")
         self._preset_set(self._pop_dev_harbor,
                          p["pop_deviation"]["safe_harbor"] * 100.0)
+        self._sync_harbor_people()
 
         if dpg.get_value(self._hinge_enabled):
             dpg.set_value(self._hinge_enabled, False)
@@ -500,11 +497,13 @@ class MenuMixin:
             return
 
     def _set_preset_info(self, missing: list[str], other: list[str] = ()) -> None:
-        """Warning line under the shapefile label; hidden when nothing to say."""
+        """Show a same-row warning label with the complete message on hover."""
         parts = (["missing " + ", ".join(missing)] if missing else []) + list(other)
         if parts:
-            dpg.set_value(self._preset_info,
+            dpg.set_value(self._preset_info_detail,
                           "Preset partly applied: " + "; ".join(parts))
+        else:
+            dpg.set_value(self._preset_info_detail, "")
         dpg.configure_item(self._preset_info, show=bool(parts))
 
     def _pick_preset_path(self, save: bool, on_path) -> None:

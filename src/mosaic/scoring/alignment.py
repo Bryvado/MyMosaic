@@ -1,4 +1,4 @@
-"""Alignment penalty against a reference plan loaded from CSV.
+"""Plan Continuity penalty against a reference plan loaded from CSV.
 
 District labels are irrelevant; the score depends on the two partitions. For
 each reference district ``a``, the scorer measures how its selected weight
@@ -6,12 +6,15 @@ each reference district ``a``, the scorer measures how its selected weight
 
     cohesion_a = SUM_p f_{a,p}^2          # probability two weighted units remain
                                           # in the same proposed district
-    penalty    = 100 * SUM_a w_a * (1 - cohesion_a) / SUM_a w_a
+    continuity = SUM_a w_a * cohesion_a / SUM_a w_a
+    penalty    = 100 * (1 - continuity / ceiling)
 
 This is one-sided: it penalizes splitting reference districts but does not score
 the purity of proposed districts. Merging a reference district whole into a
-larger proposed district therefore incurs no alignment penalty. The returned
-penalty is in ``[0, 100]`` with 0 best.
+larger proposed district therefore incurs no continuity penalty. The returned
+penalty is in ``[0, 100]`` with 0 best. The fixed population-capacity ceiling
+removes unavoidable subdivision; it is an upper bound, not a geographic optimum.
+Display components retain their unscaled percentages.
 """
 
 from __future__ import annotations
@@ -57,6 +60,118 @@ class AlignmentData:
     alt_dem_by_district: Optional[np.ndarray] = None
     alt_gop_by_district: Optional[np.ndarray] = None
     alt_labels: Optional[np.ndarray] = None
+
+
+def alignment_inputs(data, config, populations, dem_votes=None, gop_votes=None):
+    """Resolve the same fixed weight and reference mask for scoring and scaling."""
+    focus = config.alignment_party_focus
+    if focus == "rep" and gop_votes is not None:
+        weights = gop_votes
+    elif focus == "dem" and dem_votes is not None:
+        weights = dem_votes
+    else:
+        focus, weights = "none", populations
+    mask = None
+    if (config.alignment_restrict_to_party and focus in ("rep", "dem")
+            and data.alt_dem_by_district is not None
+            and data.alt_gop_by_district is not None):
+        total = data.alt_dem_by_district + data.alt_gop_by_district
+        votes = data.alt_gop_by_district if focus == "rep" else data.alt_dem_by_district
+        share = np.divide(votes, total, out=np.zeros_like(total, dtype=float), where=total > 0)
+        mask = share > config.alignment_win_threshold
+    return weights, mask
+
+
+def _column_split_loss(lower, upper, smallest, largest):
+    """Lower bound on lost cohesion mass in one balanced proposed district."""
+    # Relax reference sizes to any value in [smallest, largest], allowing reuse.
+    # If whole references can fill any allowed size, no split is forced here.
+    if np.ceil(lower / largest) <= np.floor(upper / smallest):
+        return 0.0
+    whole = np.floor(upper / smallest)
+    lo = max(0.0, lower - whole * largest)
+    hi = min(smallest, upper - whole * smallest)
+    # A maximally concentrated packing has at most one partial reference.
+    # Its concave loss is minimized at an endpoint of the remainder interval.
+    return max(0.0, min(lo * (1.0 - lo / smallest), hi * (1.0 - hi / smallest)))
+
+
+def precompute_alignment_ceiling(
+    data, populations, n_districts, tolerance, *, weights=None, district_mask=None,
+):
+    """Fast upper bound on weighted mean cohesion; independent of the proposal.
+
+    Each reference's weight is packed into chunks no larger than one district
+    can hold. Party capacity uses fractional precincts in descending votes per
+    resident order, a conservative bound even when precincts are indivisible.
+    For residents, a second bound captures unavoidable splits when merging
+    references into balanced proposed districts. Neither bound assumes geography.
+    """
+    pops = np.asarray(populations, dtype=np.float64)
+    weights = pops if weights is None else np.asarray(weights, dtype=np.float64)
+    alt = np.asarray(data.alt_assignment, dtype=np.int64)
+    if (pops.shape != alt.shape or weights.shape != alt.shape
+            or np.any(~np.isfinite(pops)) or np.any(pops < 0)
+            or np.any(~np.isfinite(weights)) or np.any(weights < 0)):
+        raise ValueError("Plan Continuity requires finite, nonnegative population and weights")
+    if n_districts < 1 or not np.isfinite(tolerance) or not 0 <= tolerance <= 1:
+        raise ValueError("Invalid district count or population tolerance")
+    total_population = float(pops.sum())
+    if total_population <= 0:
+        return 1.0
+    ideal = total_population / n_districts
+    capacity = ideal * (1.0 + tolerance)
+    masses = np.bincount(alt, weights=weights, minlength=data.n_alt_districts)
+    selected = masses > 0
+    if district_mask is not None:
+        selected &= np.asarray(district_mask, dtype=bool)
+    total_weight = float(masses[selected].sum())
+    if total_weight <= 0:
+        return 1.0
+    residents = np.array_equal(weights, pops)
+    numerator = 0.0
+    for a in np.flatnonzero(selected):
+        mass = masses[a]
+        if residents:
+            cap = min(mass, capacity)
+        else:
+            members = alt == a
+            p, w = pops[members], weights[members]
+            # Zero-population precincts consume no capacity in this relaxation.
+            cap = float(w[p == 0].sum())
+            positive = p > 0
+            p, w = p[positive], w[positive]
+            order = np.argsort(-(w / p), kind="stable")
+            p, w = p[order], w[order]
+            used = np.clip(capacity - (np.cumsum(p) - p), 0.0, p)
+            cap += float(np.sum(w * (used / p)))
+            cap = min(mass, cap)
+        if cap <= 0:
+            return 1.0
+        whole = np.floor(mass / cap)
+        remainder = max(0.0, mass - whole * cap)
+        numerator += (whole * cap * cap + remainder * remainder) / mass
+    ceiling = numerator / total_weight
+    if residents and np.all(selected[masses > 0]):
+        nonempty = masses[masses > 0]
+        loss = _column_split_loss(
+            ideal * (1.0 - tolerance), capacity, nonempty.min(), nonempty.max(),
+        )
+        ceiling = min(ceiling, 1.0 - n_districts * loss / total_population)
+    # Round upward slightly so floating-point residue cannot understate the bound.
+    return float(np.clip(ceiling + 1e-12, 1.0 / n_districts, 1.0))
+
+
+def alignment_ceiling_for_config(
+    data, config, populations, n_districts, tolerance, dem_votes=None, gop_votes=None,
+):
+    """Prepare normalization once per run, using its original tolerance."""
+    if data is None or not config.weight_alignment:
+        return 1.0
+    weights, mask = alignment_inputs(data, config, populations, dem_votes, gop_votes)
+    return precompute_alignment_ceiling(
+        data, populations, n_districts, tolerance, weights=weights, district_mask=mask,
+    )
 
 
 def precompute_alignment_data(
@@ -164,7 +279,7 @@ def precompute_alignment_data(
                               minlength=n_alt)
 
     log.info(
-        f"Alignment reference loaded: {n} precincts, {n_alt} districts "
+        f"Plan Continuity reference loaded: {n} precincts, {n_alt} districts "
         f"(from {path.name}){' with votes' if alt_dem is not None else ''}"
     )
     return AlignmentData(
@@ -199,6 +314,7 @@ def score_alignment(
     n_districts: int,
     district_mask: Optional[np.ndarray] = None,
     return_components: bool = False,
+    ceiling: float = 1.0,
 ):
     """Herfindahl cohesion penalty against the reference plan.
 
@@ -214,14 +330,17 @@ def score_alignment(
                           districts to score. None = all. Unselected
                           reference districts simply don't contribute.
         return_components: also return (mean_cohesion_pct, min_cohesion_pct)
+        ceiling: fixed run-level upper bound on mean cohesion, in (0, 1].
 
     Returns:
-        penalty in [0, 100] (0 = identical), or
+        penalty in [0, 100] (0 = at the ceiling), or
         (penalty, mean_cohesion_pct, min_cohesion_pct) when return_components=True.
     """
     # copy=False: skip the allocation when the input already has the kernel's
     # dtype. alt_assignment is stored int64 at load, so it never re-copies; the
     # proposed assignment / weights copy only if they arrive in another dtype.
+    if not np.isfinite(ceiling) or not 0 < ceiling <= 1:
+        raise ValueError("Plan Continuity ceiling must be in (0, 1]")
     m = _overlap_matrix(
         alt_assignment.astype(np.int64, copy=False),
         assignment.astype(np.int64, copy=False),
@@ -250,12 +369,13 @@ def score_alignment(
     with np.errstate(invalid="ignore", divide="ignore"):
         f = np.where(sub_pop[:, None] > 0, sub / sub_pop[:, None], 0.0)
     cohesion = np.sum(f * f, axis=1)            # (R,) in [0, 1]
-    penalty = 100.0 * np.sum(sub_pop * (1.0 - cohesion)) / total_pop
+    mean_cohesion = float(np.sum(sub_pop * cohesion) / total_pop)
+    penalty = 100.0 * np.clip(1.0 - mean_cohesion / ceiling, 0.0, 1.0)
 
     if not return_components:
         return float(penalty)
 
-    mean_ret = 100.0 * np.sum(sub_pop * cohesion) / total_pop
+    mean_ret = 100.0 * mean_cohesion
     nonempty = sub_pop > 0
     min_ret = 100.0 * float(cohesion[nonempty].min()) if nonempty.any() else 100.0
     return float(penalty), float(mean_ret), float(min_ret)

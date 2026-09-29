@@ -203,6 +203,18 @@ _BORDER_RGBA        = np.array([0,   0,   0,   255], dtype=np.uint8)
 _COUNTY_BORDER_RGBA = np.array([180, 180, 180, 255], dtype=np.uint8)
 _SPLITS_DIM_RGBA    = np.array([28,  28,  28,  255], dtype=np.uint8)
 
+
+def county_split_masks(assignment, county_ids, n_districts):
+    """Whole counties and split counties containing only complete districts."""
+    n_counties = int(county_ids.max()) + 1
+    flat = (county_ids * n_districts + assignment).astype(np.int64)
+    present = np.bincount(flat, minlength=n_counties * n_districts).reshape(
+        n_counties, n_districts) > 0
+    touches = present.sum(axis=1)
+    shared = present.sum(axis=0) > 1
+    return touches <= 1, (touches > 1) & ~present[:, shared].any(axis=1)
+
+
 PRECINCT_EDGE_ALPHA = 0.30   # white precinct hairlines when the Precincts overlay is on
 
 # Compactness (Polsby-Popper 0→1): red = not compact, green = compact
@@ -278,7 +290,14 @@ def stable_color_mapping(
 
     color_map = np.arange(k, dtype=np.int32)
     taken = np.zeros(k, dtype=bool)
+    # Intact districts retain their identity before other regions claim colors.
+    diagonal = np.diag(overlap)
+    intact = ((diagonal > 0) & (diagonal == overlap.sum(axis=0))
+              & (diagonal == overlap.sum(axis=1)))
+    taken[intact] = True
     for d in np.argsort(conf)[::-1]:
+        if intact[d]:
+            continue
         for pref in np.argsort(overlap[d])[::-1]:
             pref = int(pref)
             if not taken[pref]:
@@ -310,6 +329,7 @@ class MapView:
         # Fill for un-split counties in splits view; exports override it so the
         # dim recedes toward the (white) page instead of going near-black.
         self._splits_dim: np.ndarray = _SPLITS_DIM_RGBA.copy()
+        self._splits_light = np.array([80, 80, 80, 255], dtype=np.uint8)
         self._county_array: Optional[np.ndarray] = None
         self._dem_votes: Optional[np.ndarray] = None
         self._gop_votes: Optional[np.ndarray] = None
@@ -338,6 +358,7 @@ class MapView:
         # colour each district by its aggregate partisan lean
         self.district_partisan_overlay: bool = False
         self.splits_view: bool = False
+        self.show_district_lines: bool = True
         # colour each district by combined PP+Reock compactness
         self.compactness_view: bool = False
         self.pop_dev_view: bool = False              # colour each district by population deviation
@@ -764,27 +785,14 @@ class MapView:
             lut[:n, 3] = 255
             lut[n] = self._bg_color
 
-        rgba = self._colorise(lut).copy()
-
-        # ── Splits view (dim non-split counties, always draw county borders) ──
+        # Apply county fills per precinct before expanding to the pixel grid.
         if self.splits_view and self._county_array is not None:
-            ca = self._county_array
-            n_counties = int(ca.max()) + 1
-            flat_idx = (ca * n_districts + assignment).astype(np.int64)
-            co_di = np.bincount(
-                flat_idx, minlength=n_counties * n_districts,
-            ).reshape(n_counties, n_districts)
-            county_is_clean = (co_di > 0).sum(axis=1) <= 1  # True = not split
+            clean, contained = county_split_masks(assignment, self._county_array, n_districts)
+            lut[:n][clean[self._county_array]] = self._splits_dim
+            lut[:n][contained[self._county_array]] = self._splits_light
+        rgba = self._colorise(lut)
 
-            nca = len(ca)
-            cmap_vals = np.where(pm >= 0, ca[np.clip(pm, 0, nca - 1)], -1)
-            valid = pm >= 0
-            clean_mask = np.zeros(pm.shape, dtype=bool)
-            clean_mask[valid] = county_is_clean[cmap_vals[valid]]
-
-            if clean_mask.any():
-                rgba[clean_mask] = self._splits_dim
-
+        if self.splits_view and self._county_array is not None:
             # County borders always visible in splits view
             rgba[self._thicken(self._static_border_mask("county"))] = _COUNTY_BORDER_RGBA
 
@@ -802,17 +810,18 @@ class MapView:
                 rgba[pb_mask] = blended.astype(np.uint8)
 
         # ── District borders (over precinct boundaries) ──────────────────────
-        dist_map = np.where(pm >= 0, assignment[np.clip(pm, 0, n - 1)], -1)
-        bh = dist_map[:-1, :] != dist_map[1:, :]
-        bv = dist_map[:, :-1] != dist_map[:, 1:]
-        vh = (dist_map[:-1, :] >= 0) & (dist_map[1:, :] >= 0)
-        vv = (dist_map[:, :-1] >= 0) & (dist_map[:, 1:] >= 0)
-        border = np.zeros(pm.shape, dtype=bool)
-        border[:-1, :] |= bh & vh
-        border[1:,  :] |= bh & vh
-        border[:, :-1] |= bv & vv
-        border[:, 1:]  |= bv & vv
-        rgba[self._thicken(border)] = _BORDER_RGBA
+        if self.show_district_lines:
+            dist_map = np.where(pm >= 0, assignment[np.clip(pm, 0, n - 1)], -1)
+            bh = dist_map[:-1, :] != dist_map[1:, :]
+            bv = dist_map[:, :-1] != dist_map[:, 1:]
+            vh = (dist_map[:-1, :] >= 0) & (dist_map[1:, :] >= 0)
+            vv = (dist_map[:, :-1] >= 0) & (dist_map[:, 1:] >= 0)
+            border = np.zeros(pm.shape, dtype=bool)
+            border[:-1, :] |= bh & vh
+            border[1:,  :] |= bh & vh
+            border[:, :-1] |= bv & vv
+            border[:, 1:]  |= bv & vv
+            rgba[self._thicken(border)] = _BORDER_RGBA
 
         # ── State outline (above district borders so it's a clean edge) ──────
         if self.state_outline:

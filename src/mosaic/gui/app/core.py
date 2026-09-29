@@ -87,13 +87,16 @@ class MosaicApp(*INTERNAL_MIXINS, *_APP_MIXINS):
         # Recent shapefiles (path + column config), loaded from disk in setup()
         self._recent_shapefiles: list = []   # [{"path": str, "config": dict}]
         self._recent_presets: list = []      # preset file paths, newest first
-        # Ensemble tool: while active, run() refreshes only the ensemble window.
+        # Batch Runs tool: while active, run() refreshes only the batch window.
         self._ensemble_active = False
+        self._workflow_blocks_main = False
         self._ens_writer = None
-        self._ens_keep_best = False          # Ensemble Advanced > Keep best map
-        self._ens_targeting = False          # Ensemble Advanced > Targeting
+        self._ens_keep_best = False          # Batch Runs Advanced > Keep best map
+        self._ens_targeting = False          # Batch Runs Advanced > Targeting
         self._ens_target_tail = False        # ... > Favor lower-tail scores
-        self._ensemble_item = 0              # Advanced > Ensemble... item
+        self._ens_parallel = False
+        self._ens_worker_count = None        # resolved from available CPUs when opened
+        self._ensemble_item = 0              # Advanced > Batch Runs... item
         self._min_width_set = False          # window min width corrected for the frame
         self._file_save_asgn_item = 0        # File > Save Assignments menu item
         self._file_save_metrics_item = 0     # File > Save District Info menu item
@@ -126,11 +129,11 @@ class MosaicApp(*INTERNAL_MIXINS, *_APP_MIXINS):
         # Track what data the current shapefile has
         self._has_elections: bool = False
 
-        # Relight: a "continue-refining" mode that reseeds each run from the
-        # current on-screen map (mutually exclusive with Hot Start). _saved holds
+        # Fine Tune: a "continue-refining" mode that reseeds each run from the
+        # current on-screen map (mutually exclusive with Start from Plan). _saved holds
         # the annealing-control values captured when armed, restored on clear.
-        self._relight_active: bool = False
-        self._relight_saved: Optional[dict] = None
+        self._fine_tune_active: bool = False
+        self._fine_tune_saved: Optional[dict] = None
 
         # Tracks whether the last frame was in a "running" state, so we can
         # trigger a one-shot precise-label re-render on transitions out of
@@ -182,6 +185,7 @@ class MosaicApp(*INTERNAL_MIXINS, *_APP_MIXINS):
         self._buf_popdev     = _SeriesBuffer()
         self._buf_popdev_max = _SeriesBuffer()
         self._buf_popdev_mean = _SeriesBuffer()
+        self._buf_align_penalty = _SeriesBuffer()
         self._buf_align_mean = _SeriesBuffer()
         self._buf_align_min  = _SeriesBuffer()
         self._buf_cuts      = _SeriesBuffer()
@@ -302,12 +306,13 @@ class MosaicApp(*INTERNAL_MIXINS, *_APP_MIXINS):
                     except Empty:
                         break
                     self._perform_session_action(request)
+                self._sync_workflow_backdrop()
                 self._update_window_layout()
                 if self._ensemble_active:
                     self._update_ensemble_ui()
                 else:
                     self._tick_session_action()
-                    if not self._session_action_pending():
+                    if not self._session_action_pending() and not self._workflow_blocks_main:
                         self._update_ui()
                 self._refresh_ens_hist()
                 self._refresh_ens_scatter()
@@ -319,6 +324,7 @@ class MosaicApp(*INTERNAL_MIXINS, *_APP_MIXINS):
                 with self._ens_progress.lock:
                     self._ens_progress.stop_requested = True
             self.state.request_stop()
+            self._shutdown_ensemble()
             self._shutdown_map_navigation()
             dpg.destroy_context()
 

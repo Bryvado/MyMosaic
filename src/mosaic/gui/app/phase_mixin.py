@@ -68,7 +68,7 @@ class PhaseMixin:
         self._build_phase_themes()
         with dpg.window(
             label="Comet Plot", tag="panel_phase", show=False,
-            width=420, height=440, pos=[_LEFT_W + 100, 80],
+            width=252, height=336, pos=[_LEFT_W + 100, 80],
             on_close=lambda: dpg.set_value(self._panel_phase_item, False),
         ):
             with dpg.group(horizontal=True):

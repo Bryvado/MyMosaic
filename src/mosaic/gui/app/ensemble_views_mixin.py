@@ -1,4 +1,4 @@
-"""Ensemble pop-out views: histogram of one metric, scatterplot of two."""
+"""Batch Runs pop-out views: histogram of one metric, scatterplot of two."""
 from concurrent.futures import Future
 
 from ._common import _ASSETS_DIR, dpg, log, np, threading
@@ -6,8 +6,6 @@ from ._common import _ASSETS_DIR, dpg, log, np, threading
 _HIST_TAG = "popup_ens_hist"
 _SCATTER_TAG = "popup_ens_scatter"
 _NOT_METRICS = {"run_id", "seed", "iterations", "seconds", "phase"}
-_MAX_BINS = 40
-_FREEZE_ALPHA = 0.45        # main window opacity while an ensemble runs
 # One sequential hue; the lighter step reads on the dark plot background.
 _BAR_RGBA = {"light": (52, 110, 180, 230), "dark": (110, 165, 230, 230)}
 
@@ -39,8 +37,8 @@ _LABELS = {
     "opportunity_asian": "Opportunity Districts, Asian",
     "neighborhood_severance_penalty": "Neighborhood Severance (penalty)",
     "community_dispersion_penalty": "Community Dispersion (penalty)",
-    "alignment_mean_retention": "Alignment, Mean Retention",
-    "alignment_min_retention": "Alignment, Min Retention",
+    "alignment_mean_retention": "Plan Continuity, Mean Retention",
+    "alignment_min_retention": "Plan Continuity, Min Retention",
     # Targeting's tuned settings, recorded per run.
     "iterations": "Iterations",
     "n3_probability": "N3 Probability",
@@ -54,13 +52,6 @@ def _metric_label(col: str) -> str:
     return _LABELS.get(col) or col.replace("_", " ").capitalize()
 
 
-def pearson_r(x: np.ndarray, y: np.ndarray) -> "float | None":
-    """Pearson r, or None with fewer than 3 points or a constant axis."""
-    if x.size < 3 or np.ptp(x) == 0 or np.ptp(y) == 0:
-        return None
-    return float(np.corrcoef(x, y)[0, 1])
-
-
 def _padded(v: np.ndarray, hi_extra: float = 0.0) -> tuple[float, float]:
     """Axis limits with a 6% margin; hi_extra widens the top/right side,
     where point labels sit."""
@@ -69,28 +60,11 @@ def _padded(v: np.ndarray, hi_extra: float = 0.0) -> tuple[float, float]:
     return lo - span * 0.06, hi + span * (0.06 + hi_extra)
 
 
-def hist_edges(v: np.ndarray) -> np.ndarray:
-    """Bin edges: one bar per value for small-range integer metrics (cut
-    edges, splits), otherwise numpy's 'auto' rule capped at _MAX_BINS."""
-    lo, hi = float(v.min()), float(v.max())
-    if (np.all(v == np.round(v)) and hi - lo < _MAX_BINS
-            and max(abs(lo), abs(hi)) < 2**52):
-        return np.arange(lo - 0.5, hi + 1.5)
-    if hi == lo:
-        d = abs(lo) * 0.01 or 0.5
-        return np.array([lo - d, lo + d])
-    iqr = float(np.subtract(*np.percentile(v, [75, 25])))
-    width = 2 * iqr / np.cbrt(v.size)
-    fd = int(np.ceil(min(_MAX_BINS, (hi - lo) / width))) if width > 0 else 1
-    sturges = int(np.ceil(np.log2(v.size) + 1))
-    return np.linspace(lo, hi, min(_MAX_BINS, max(fd, sturges)) + 1)
-
-
 class EnsembleViewsMixin:
-    """Ensemble pop-out views: histogram of one metric, scatterplot of two."""
+    """Batch Runs pop-out views: histogram of one metric, scatterplot of two."""
 
     def _ens_columns(self) -> tuple[list[str], list[str]]:
-        """Metric names for the current ensemble; no result rows are loaded."""
+        """Metric names for the current batch; no result rows are loaded."""
         w = self._ens_writer
         if w is None:
             return [], []
@@ -109,6 +83,8 @@ class EnsembleViewsMixin:
         A changed request waits for its predecessor to finish before starting;
         obsolete results are discarded instead of building a worker backlog.
         """
+        if getattr(self, "_pending_session_action", None) is not None:
+            return False, None
         jobs = self.__dict__.setdefault("_ens_queries", {})
         used = self.__dict__.setdefault("_ens_query_used", {})
         job = jobs.get(name)
@@ -133,10 +109,10 @@ class EnsembleViewsMixin:
             try:
                 result = query()
             except Exception as exc:
-                log.exception("Ensemble results query failed")
+                log.exception("Batch Runs results query failed")
                 result = exc
             future.set_result(result)
-        threading.Thread(target=work, name="ensemble-" + name, daemon=True).start()
+        threading.Thread(target=work, name="batch-" + name, daemon=True).start()
         return False, None
 
     def _view_themes(self) -> dict:
@@ -194,9 +170,9 @@ class EnsembleViewsMixin:
         self._scatter_sig = None
         self._scatter_notes: list = []
         vp_w = dpg.get_viewport_client_width() or 1300
-        with dpg.window(label="Ensemble Scatterplot", tag=_SCATTER_TAG,
-                        width=560, height=500, pos=[max(20, vp_w - 600), 100],
-                        min_size=[420, 320], no_collapse=True, no_scrollbar=True,
+        with dpg.window(label="Batch Runs Scatterplot", tag=_SCATTER_TAG,
+                        width=460, height=392, pos=[max(20, vp_w - 460), 100],
+                        min_size=[440, 320], no_collapse=True, no_scrollbar=True,
                         no_scroll_with_mouse=True):
             with dpg.group(horizontal=True):
                 dpg.add_text("X:")
@@ -216,7 +192,7 @@ class EnsembleViewsMixin:
                     callback=lambda: self._refresh_ens_scatter(True))
             with dpg.tooltip(self._scatter_r):
                 dpg.add_text("Correlation and trendline use all finite pairs. "
-                             "Large ensembles show up to 2,000 evenly spaced runs.", wrap=300)
+                             "Large batches show up to 2,000 evenly spaced runs.", wrap=300)
             with dpg.tooltip(self._scatter_labels):
                 dpg.add_text("Run labels appear when there are at most 100 points.")
             with dpg.plot(height=-1, width=-1, no_menus=True, no_mouse_pos=True) \
@@ -316,9 +292,9 @@ class EnsembleViewsMixin:
         self._hist_edges = None
         self._hist_counts = None
         vp_w = dpg.get_viewport_client_width() or 1300
-        with dpg.window(label="Ensemble Histograms", tag=_HIST_TAG,
-                        width=600, height=460, pos=[max(20, vp_w - 640), 60],
-                        min_size=[420, 300],   # fits the two stats rows
+        with dpg.window(label="Batch Runs Histograms", tag=_HIST_TAG,
+                        width=360, height=392, pos=[max(20, vp_w - 460), 60],
+                        min_size=[360, 300],   # fits the two stats rows
                         no_collapse=True, no_scrollbar=True,
                         no_scroll_with_mouse=True):
             with dpg.group(horizontal=True):
@@ -417,32 +393,48 @@ class EnsembleViewsMixin:
                         f"{n:,} run{'s' if n != 1 else ''}")
         dpg.set_value(self._hist_hover, text)
 
-    # ── Main-window freeze while an ensemble runs ────────────────────────────
+    # ── Focused workflows ────────────────────────────────────────────────────
 
-    def _freeze_main(self, on: bool) -> None:
-        """Dim the main window and disable its menus. Its action handlers also
-        return early while _ensemble_active, so nothing can disturb the run;
-        pop-out views stay live."""
-        if not hasattr(self, "_freeze_theme"):
-            with dpg.theme() as self._freeze_theme:
-                with dpg.theme_component(dpg.mvAll):
-                    dpg.add_theme_style(dpg.mvStyleVar_Alpha, _FREEZE_ALPHA,
-                                        category=dpg.mvThemeCat_Core)
-        dpg.bind_item_theme("main_window", self._freeze_theme if on else 0)
-        for menu in dpg.get_item_children("main_menu_bar", 1) or []:
-            dpg.configure_item(menu, enabled=not on)
-        # The map is a drawn image, which style alpha skips; tint it to match.
-        if dpg.does_item_exist("map_image"):
-            tint = (255, 255, 255, round(255 * _FREEZE_ALPHA) if on else 255)
-            key = "tint_color" if self._map_native_input else "color"
-            dpg.configure_item("map_image", **{key: tint})
+    def _sync_workflow_backdrop(self) -> None:
+        """Block the main app while a workflow and its companion windows are open."""
+        from mosaic.gui.theme import MODAL_DIM
 
-
-def _formatter(vals: np.ndarray):
-    """One decimal count for every number shown for a metric, from its spread:
-    whole numbers stay whole, 54.0-69.1 gets 1 place, 0.035-0.183 gets 3."""
-    return _formatter_bounds(float(vals.min()), float(vals.max()), float(vals.mean()),
-                             bool(np.all(vals == np.round(vals))))
+        focused = any(dpg.does_item_exist(tag) and dpg.is_item_shown(tag)
+                      for tag in ("popup_ensemble", "popup_alignment_settings"))
+        previous = getattr(self, "_workflow_blocks_main", False)
+        self._workflow_blocks_main = focused
+        if not dpg.does_item_exist("main_window"):
+            return
+        if focused != previous:
+            for tag in ("main_top_controls", "main_score_controls"):
+                if dpg.does_item_exist(tag):
+                    dpg.configure_item(tag, enabled=not focused)
+            if dpg.does_item_exist("main_menu_bar"):
+                menus = dpg.get_item_children("main_menu_bar", 1) or []
+                if focused:
+                    self._workflow_menu_enabled = {
+                        menu: dpg.get_item_configuration(menu)["enabled"] for menu in menus}
+                for menu in menus:
+                    dpg.configure_item(menu, enabled=(False if focused else
+                        self._workflow_menu_enabled.get(menu, True)))
+            dpg.configure_item("main_window", no_bring_to_front_on_focus=focused,
+                               no_scroll_with_mouse=focused)
+        if not focused:
+            if dpg.does_item_exist("workflow_backdrop"):
+                dpg.configure_item("workflow_backdrop", show=False)
+            return
+        if not dpg.does_item_exist("workflow_backdrop"):
+            dpg.add_child_window(tag="workflow_backdrop", parent="main_window", pos=(0, 0),
+                                 width=1, height=1, border=False, no_scrollbar=True,
+                                 no_scroll_with_mouse=True, show=False)
+            with dpg.theme() as self._workflow_backdrop_theme:
+                with dpg.theme_component(dpg.mvChildWindow):
+                    dpg.add_theme_color(dpg.mvThemeCol_ChildBg, MODAL_DIM)
+            dpg.bind_item_theme("workflow_backdrop", self._workflow_backdrop_theme)
+        size = dpg.get_item_state("main_window").get("rect_size", (1, 1))
+        dpg.configure_item("workflow_backdrop", show=focused,
+                           pos=(0, dpg.get_y_scroll("main_window")),
+                           width=max(1, int(size[0])), height=max(1, int(size[1])))
 
 
 def _formatter_bounds(lo, hi, mean, integral):

@@ -37,9 +37,10 @@ Two penalty forms, both blended 50/50 across the county and district directions
     then * _PENALTY_SCALE so its magnitude sits near the unclipped form's (so
     toggling the mode doesn't reprice the weight).
 
-The `raw_county` / `raw_district` sqrt-entropy scores (min 1.0 = no splits) are
-population- and lopsidedness-weighted, so severity and county size matter -- a
-plain split count is Classic Splitting's job, not this one.
+This module supplies the unchanged dispersion component. The score_plan
+aggregator adds one point per excess county split and one per missed
+single-county district, using Classic Splitting's population allowances.
+Those structural terms are added in both modes, outside the dispersion cap.
 """
 
 from __future__ import annotations

@@ -1,4 +1,5 @@
 """Builds the main two-column window layout (one large builder)."""
+from mosaic.gui.choice_radio import choice_radio
 from mosaic.gui.map_navigation import MAX_ZOOM
 
 from ._common import (
@@ -27,6 +28,7 @@ from ._common import (
 )
 
 _SCORE_MIN_H = 80
+_STARTUP_W = 1300
 
 
 def _initial_viewport_bounds():
@@ -39,11 +41,11 @@ def _initial_viewport_bounds():
             work = wintypes.RECT()
             if ctypes.windll.user32.SystemParametersInfoW(0x0030, 0, ctypes.byref(work), 0):
                 height = min(_VP_H, work.bottom - work.top - 40)
-                return dict(width=_MIN_CLIENT_W, height=max(560, height),
+                return dict(width=_STARTUP_W, height=max(560, height),
                             x_pos=work.left + 20, y_pos=work.top + 20)
         except (AttributeError, OSError):
             pass
-    return dict(width=_MIN_CLIENT_W, height=700)
+    return dict(width=_STARTUP_W, height=700)
 
 
 class SetupMixin:
@@ -329,7 +331,7 @@ class SetupMixin:
                             self._popdev_enabled, self._on_popdev_score_toggle),
                     )
                     self._svis_alignment = dpg.add_menu_item(
-                        label="Alignment", check=True, default_value=False,
+                        label="Plan Continuity", check=True, default_value=False,
                         callback=lambda: self._set_score_row_vis(
                             "score_row_alignment", dpg.get_value(self._svis_alignment),
                             self._alignment_enabled, self._on_alignment_toggle),
@@ -450,7 +452,7 @@ class SetupMixin:
                         callback=self._on_panel_popdev_toggle,
                     )
                     self._panel_alignment_item = dpg.add_menu_item(
-                        label="Alignment", check=True, default_value=False,
+                        label="Plan Continuity", check=True, default_value=False,
                         callback=self._on_panel_alignment_toggle,
                     )
                     dpg.add_separator()
@@ -542,20 +544,19 @@ class SetupMixin:
 
                 with dpg.menu(label="Advanced", tag="menu_debug"):
                     self._ensemble_item = dpg.add_menu_item(
-                        label="Ensemble...", enabled=False,
+                        label="Batch Runs...", enabled=False,
                         callback=self._on_open_ensemble)
                     dpg.add_separator()
                     self._hot_start_load_item = dpg.add_menu_item(
-                        label="Load Hot Start...",
+                        label="Start from Plan...",
                         callback=self._on_load_hot_start,
                     )
                     self._tooltip(
                         self._hot_start_load_item,
-                        "Start from assignments in a CSV instead of generating a "
-                        "starting map. The district count must match Districts.",
+                        "Start from a CSV or the current map, with optional district locks.",
                     )
                     self._hot_start_clear_item = dpg.add_menu_item(
-                        label="Clear Hot Start",
+                        label="Clear Starting Plan",
                         enabled=False,
                         callback=self._on_clear_hot_start,
                     )
@@ -566,24 +567,24 @@ class SetupMixin:
                     )
 
                     dpg.add_separator()
-                    self._relight_item = dpg.add_menu_item(
-                        label="Relight",
+                    self._fine_tune_item = dpg.add_menu_item(
+                        label="Fine Tune",
                         check=True, default_value=False, enabled=False,
-                        callback=self._on_relight_toggle,
+                        callback=self._on_fine_tune_toggle,
                     )
                     self._tooltip(
-                        self._relight_item,
+                        self._fine_tune_item,
                         "Start each new run from the map on screen and apply "
-                        "refinement settings. Cannot be used with Hot Start.",
+                        "refinement settings. Cannot be used with Start from Plan.",
                     )
-                    self._relight_clear_item = dpg.add_menu_item(
-                        label="Clear Relight",
+                    self._fine_tune_clear_item = dpg.add_menu_item(
+                        label="Stop Fine-Tuning",
                         enabled=False,
-                        callback=lambda: self._clear_relight(),
+                        callback=lambda: self._clear_fine_tune(),
                     )
                     self._tooltip(
-                        self._relight_clear_item,
-                        "Turn off Relight and restore the previous search settings.",
+                        self._fine_tune_clear_item,
+                        "Turn off Fine Tune and restore the previous search settings.",
                     )
 
                     dpg.add_separator()
@@ -606,8 +607,9 @@ class SetupMixin:
                         "Choose the rule used to assign district numbers.",
                     )
 
-            with dpg.child_window(width=-1, height=_TOP_H, border=False, tag="top_section",
-                                  no_scrollbar=True):
+            with dpg.group(tag="main_top_controls"), dpg.child_window(
+                    width=-1, height=_TOP_H, border=False, tag="top_section",
+                    no_scrollbar=True):
                 with dpg.group(horizontal=True):
 
                     # ── Left column ───────────────────────────────────────────
@@ -625,18 +627,7 @@ class SetupMixin:
                         self._shp_info = self.theme.text(
                             "No shapefile loaded", "muted", wrap=_LEFT_W - 44,
                         )
-                        self._hot_start_info = self.theme.text(
-                            "", "warning", wrap=_LEFT_W - 44,
-                        )
-                        dpg.configure_item(self._hot_start_info, show=False)
-                        self._relight_info = self.theme.text(
-                            "", "warning", wrap=_LEFT_W - 44,
-                        )
-                        dpg.configure_item(self._relight_info, show=False)
-                        self._preset_info = self.theme.text(
-                            "", "warning", wrap=_LEFT_W - 44,
-                        )
-                        dpg.configure_item(self._preset_info, show=False)
+                        self._build_start_status_row()
 
                         dpg.add_spacer(height=_LEFT_GAP)
                         self.theme.text("Run Parameters", "heading")
@@ -830,9 +821,9 @@ class SetupMixin:
                             dpg.add_table_column(width_fixed=True)   # photo
                             with dpg.table_row():
                                 with dpg.group(horizontal=True):
-                                    self.theme.text("Fill:", "muted")
+                                    self.theme.text("Fill:", "muted", tag="map_fill_label")
                                     self._fill_combo = dpg.add_combo(
-                                        items=[_FILL_NONE],
+                                        items=self._fill_labels(),
                                         default_value=_FILL_NONE,
                                         width=225, callback=self._on_fill_combo,
                                     )
@@ -841,7 +832,7 @@ class SetupMixin:
                                         "Color the map by one measure. Unavailable "
                                         "choices show which data they require.",
                                     )
-                                with dpg.group(horizontal=True):
+                                with dpg.group(horizontal=True, tag="map_overlay_controls"):
                                     self.theme.text("Overlay:", "muted")
                                     self._county_overlay = dpg.add_checkbox(
                                         label="County", default_value=False,
@@ -875,17 +866,17 @@ class SetupMixin:
                                         "one district. Requires a county column.",
                                     )
                                 dpg.add_spacer(width=1)
-                                with dpg.group(horizontal=True):
+                                with dpg.group(horizontal=True, tag="map_save_controls"):
                                     self._cam_btn = cam_btn = dpg.add_image_button(
                                         "camera_icon_texture",
                                         callback=self._on_save_map,
-                                        width=20, height=20,
+                                        width=13, height=13,
                                     )
                                     with dpg.tooltip(cam_btn):
                                         dpg.add_text(
                                             "Save a PNG of the full map.")
                                     self._more_btn = more_btn = dpg.add_button(
-                                        label="Save Map Image...",
+                                        label="Export",
                                         callback=self._on_advanced_save_open,
                                     )
                                     with dpg.tooltip(more_btn):
@@ -896,7 +887,7 @@ class SetupMixin:
                                         color=self.theme.color("body"),
                                         secondary_color=self.theme.color("muted"),
                                     )
-                                    # Breathing room so Save Map Image... isn't
+                                    # Breathing room so Export isn't
                                     # flush against the map's right border.
                                     dpg.add_spacer(width=4)
                         dpg.bind_item_theme(map_toolbar, _toolbar_theme)
@@ -939,7 +930,8 @@ class SetupMixin:
             # ── Score panel (bottom) ──────────────────────────────────────────
             # Scores absorb vertical resizing while the map/controls stay fixed.
             # Page scrolling is a fallback when even a small score area cannot fit.
-            with dpg.child_window(width=-1, height=_SCORE_MIN_H, border=True, tag="score_panel"):
+            with dpg.group(tag="main_score_controls"), dpg.child_window(
+                    width=-1, height=_SCORE_MIN_H, border=True, tag="score_panel"):
                 with dpg.group(horizontal=True):
                     self.theme.text("Choose visible scores from the Scores menu", "muted")
                     dpg.add_spacer(width=12)
@@ -953,7 +945,7 @@ class SetupMixin:
 
                     # Default scores lead each column; optional scores follow.
                     with dpg.child_window(width=_SCORE_COL_W, height=-1,
-                                          border=False):
+                                          border=False, tag="score_column_left"):
                         with dpg.group(tag="score_row_hc", show=True):
                             with dpg.group(horizontal=True):
                                 self._hc_enabled = dpg.add_checkbox(
@@ -971,7 +963,7 @@ class SetupMixin:
                                 self._w_holistic_compactness = dpg.add_slider_int(
                                     label="Weight",
                                     default_value=50, min_value=0, max_value=100,
-                                    width=_SCORE_COL_W - 100,
+                                    width=-75,
                                 )
                             dpg.add_spacer(height=4)
 
@@ -992,7 +984,7 @@ class SetupMixin:
                                 self._w_holistic_splitting = dpg.add_slider_int(
                                     label="Weight",
                                     default_value=25, min_value=0, max_value=100,
-                                    width=_SCORE_COL_W - 100,
+                                    width=-75,
                                 )
                             dpg.add_spacer(height=4)
 
@@ -1012,9 +1004,9 @@ class SetupMixin:
                                 self._hint(self._county_bias_lbl, "county_edge_bias")
                             with dpg.group(tag="county_bias_controls", show=False):
                                 self._county_bias = dpg.add_slider_int(
-                                    label="Multiplier",
+                                    label="Factor",
                                     default_value=5, min_value=1, max_value=20,
-                                    width=_SCORE_COL_W - 100,
+                                    width=-75,
                                 )
                             dpg.add_spacer(height=4)
 
@@ -1035,7 +1027,7 @@ class SetupMixin:
                                 self._w_cut_edges = dpg.add_slider_int(
                                     label="Weight",
                                     default_value=1, min_value=0, max_value=100,
-                                    width=_SCORE_COL_W - 100,
+                                    width=-75,
                                 )
                             dpg.add_spacer(height=4)
 
@@ -1056,7 +1048,7 @@ class SetupMixin:
                                 self._w_polsby_popper = dpg.add_slider_int(
                                     label="Weight",
                                     default_value=25, min_value=0, max_value=100,
-                                    width=_SCORE_COL_W - 100,
+                                    width=-75,
                                 )
                             dpg.add_spacer(height=4)
 
@@ -1077,7 +1069,7 @@ class SetupMixin:
                                 self._w_reock = dpg.add_slider_int(
                                     label="Weight",
                                     default_value=25, min_value=0, max_value=100,
-                                    width=_SCORE_COL_W - 100,
+                                    width=-75,
                                 )
                             dpg.add_spacer(height=4)
 
@@ -1098,12 +1090,12 @@ class SetupMixin:
                                 self._w_county_excess = dpg.add_slider_int(
                                     label="Excess weight",
                                     default_value=1, min_value=0, max_value=100,
-                                    width=_SCORE_COL_W - 175,
+                                    width=-150,
                                 )
                                 self._w_county_unified = dpg.add_slider_int(
                                     label="Single-county weight",
                                     default_value=1, min_value=0, max_value=100,
-                                    width=_SCORE_COL_W - 175,
+                                    width=-150,
                                 )
                             dpg.add_spacer(height=4)
 
@@ -1128,7 +1120,7 @@ class SetupMixin:
                                 self._w_pop_deviation = dpg.add_slider_float(
                                     label="Weight",
                                     default_value=1.0, min_value=0.0, max_value=100.0,
-                                    format="%.1f", width=_SCORE_COL_W - 100,
+                                    format="%.1f", width=-75,
                                 )
                             dpg.add_spacer(height=4)
 
@@ -1139,7 +1131,7 @@ class SetupMixin:
                                     callback=self._on_alignment_toggle,
                                 )
                                 self._alignment_lbl = self.theme.text(
-                                    "Alignment", "secondary",
+                                    "Plan Continuity", "secondary",
                                 )
                                 self._hint(self._alignment_lbl, "alignment")
                                 dpg.add_button(label="↗", width=24,
@@ -1159,17 +1151,14 @@ class SetupMixin:
                                 self._w_alignment = dpg.add_slider_int(
                                     label="Weight",
                                     default_value=25, min_value=0, max_value=100,
-                                    width=_SCORE_COL_W - 100,
+                                    width=-75,
                                 )
                             dpg.add_spacer(height=4)
 
-                    # Col 2: shape + partisan bias
-                    # Col 2: partisanship -- vote-seat fairness
-                    # Col 2: Proportionality (flagship) first, then partisanship.
-                    # Col 2: flagships (Proportionality, Competitiveness), then the
-                    # remaining partisan fairness metrics.
+                    # Flexible columns share remaining width. Negative slider widths
+                    # reserve 75px for labels and right clearance, independent of values.
                     with dpg.child_window(width=_SCORE_COL_W, height=-1,
-                                          border=False):
+                                          border=False, tag="score_column_middle"):
                         with dpg.group(tag="score_row_hprop", show=True):
                             with dpg.group(horizontal=True):
                                 self._hprop_enabled = dpg.add_checkbox(
@@ -1188,7 +1177,7 @@ class SetupMixin:
                                 self._w_holistic_proportionality = dpg.add_slider_int(
                                     label="Weight",
                                     default_value=25, min_value=0, max_value=100,
-                                    width=_SCORE_COL_W - 100,
+                                    width=-75,
                                 )
                             dpg.add_spacer(height=4)
 
@@ -1211,7 +1200,7 @@ class SetupMixin:
                                 self._w_holistic_competitiveness = dpg.add_slider_int(
                                     label="Weight",
                                     default_value=25, min_value=0, max_value=100,
-                                    width=_SCORE_COL_W - 100,
+                                    width=-75,
                                 )
                             dpg.add_spacer(height=4)
 
@@ -1240,16 +1229,11 @@ class SetupMixin:
                                 self._w_mean_median = dpg.add_slider_int(
                                     label="Weight",
                                     default_value=1, min_value=0, max_value=100,
-                                    width=_SCORE_COL_W - 100,
+                                    width=-75,
                                 )
-                                self._mm_dir = dpg.add_radio_button(
+                                self._mm_dir = choice_radio(help_key="direction",
                                     items=["Fair", "D", "R"],
                                     default_value="Fair", horizontal=True,
-                                )
-                                self._tooltip(
-                                    self._mm_dir,
-                                    "Fair moves toward zero. D and R favor the "
-                                    "selected party's direction.",
                                 )
                             dpg.add_spacer(height=4)
 
@@ -1275,16 +1259,11 @@ class SetupMixin:
                                 self._w_efficiency_gap = dpg.add_slider_int(
                                     label="Weight",
                                     default_value=1, min_value=0, max_value=100,
-                                    width=_SCORE_COL_W - 100,
+                                    width=-75,
                                 )
-                                self._eg_dir = dpg.add_radio_button(
+                                self._eg_dir = choice_radio(help_key="direction",
                                     items=["Fair", "D", "R"],
                                     default_value="Fair", horizontal=True,
-                                )
-                                self._tooltip(
-                                    self._eg_dir,
-                                    "Fair moves toward zero. D and R favor the "
-                                    "selected party's direction.",
                                 )
                             dpg.add_spacer(height=4)
 
@@ -1310,16 +1289,11 @@ class SetupMixin:
                                 self._w_partisan_bias = dpg.add_slider_int(
                                     label="Weight",
                                     default_value=1, min_value=0, max_value=100,
-                                    width=_SCORE_COL_W - 100,
+                                    width=-75,
                                 )
-                                self._pb_dir = dpg.add_radio_button(
+                                self._pb_dir = choice_radio(help_key="direction",
                                     items=["Fair", "D", "R"],
                                     default_value="Fair", horizontal=True,
-                                )
-                                self._tooltip(
-                                    self._pb_dir,
-                                    "Fair moves toward zero. D and R favor the "
-                                    "selected party's direction.",
                                 )
                             dpg.add_spacer(height=4)
 
@@ -1341,13 +1315,14 @@ class SetupMixin:
                                 self._w_partisan_gini = dpg.add_slider_int(
                                     label="Weight",
                                     default_value=25, min_value=0, max_value=100,
-                                    width=_SCORE_COL_W - 100,
+                                    width=-75,
                                 )
                             dpg.add_spacer(height=4)
 
                     # Col 3: flagships (Electoral Opportunity, Community Dispersion),
                     # then Neighborhood Severance, then partisan seat outcomes.
-                    with dpg.child_window(width=-1, height=-1, border=False):
+                    with dpg.child_window(width=_SCORE_COL_W, height=-1, border=False,
+                                          tag="score_column_right"):
                         with dpg.group(tag="score_row_representation", show=True):
                             with dpg.group(horizontal=True):
                                 self._representation_enabled = dpg.add_checkbox(
@@ -1369,7 +1344,7 @@ class SetupMixin:
                                 self._w_representation = dpg.add_slider_int(
                                     label="Weight",
                                     default_value=25, min_value=0, max_value=100,
-                                    width=_SCORE_COL_W - 100,
+                                    width=-75,
                                 )
                             dpg.add_spacer(height=4)
 
@@ -1393,7 +1368,7 @@ class SetupMixin:
                                 self._w_community_congruence = dpg.add_slider_int(
                                     label="Weight",
                                     default_value=10, min_value=0, max_value=100,
-                                    width=_SCORE_COL_W - 100,
+                                    width=-75,
                                 )
                             dpg.add_spacer(height=4)
                         with dpg.group(tag="score_row_minority_cohesion", show=False):
@@ -1414,7 +1389,7 @@ class SetupMixin:
                                 self._w_minority_cohesion = dpg.add_slider_int(
                                     label="Weight",
                                     default_value=10, min_value=0, max_value=100,
-                                    width=_SCORE_COL_W - 100,
+                                    width=-75,
                                 )
                             dpg.add_spacer(height=4)
 
@@ -1436,15 +1411,11 @@ class SetupMixin:
                                 self._w_dem_seats = dpg.add_slider_int(
                                     label="Weight",
                                     default_value=25, min_value=0, max_value=100,
-                                    width=_SCORE_COL_W - 100,
+                                    width=-75,
                                 )
-                                self._dem_seats_dir = dpg.add_radio_button(
+                                self._dem_seats_dir = choice_radio(help_key="seats",
                                     items=["D", "R"],
                                     default_value="D", horizontal=True,
-                                )
-                                self._tooltip(
-                                    self._dem_seats_dir,
-                                    "D seeks more expected Democratic seats; R seeks fewer.",
                                 )
                             dpg.add_spacer(height=4)
 
@@ -1466,7 +1437,7 @@ class SetupMixin:
                                 self._w_majority = dpg.add_slider_int(
                                     label="Weight",
                                     default_value=1, min_value=0, max_value=100,
-                                    width=_SCORE_COL_W - 100,
+                                    width=-75,
                                 )
                                 with dpg.group(horizontal=True):
                                     self._majority_dem_chk = dpg.add_checkbox(
@@ -1506,12 +1477,12 @@ class SetupMixin:
                                 self._w_hinge = dpg.add_slider_int(
                                     label="Weight",
                                     default_value=1, min_value=0, max_value=100,
-                                    width=_SCORE_COL_W - 100,
+                                    width=-75,
                                 )
                                 self._hinge_threshold = dpg.add_slider_int(
-                                    label="Threshold",
+                                    label="Target",
                                     default_value=8, min_value=1, max_value=14,
-                                    width=_SCORE_COL_W - 100,
+                                    width=-75,
                                 )
                                 self._tooltip(
                                     self._hinge_threshold,
@@ -1545,6 +1516,14 @@ class SetupMixin:
         # MapView is constructed after the initial theme application, so copy
         # the active background into it before a shapefile builds its LUT.
         self._sync_map_bg_to_theme()
+
+    def _build_start_status_row(self):
+        with dpg.group(horizontal=True):
+            self._hot_start_info = self.theme.text("Start: Random partition", "muted")
+            self._start_mode_tooltip = None
+            self._preset_info = self.theme.text("Preset warning", "warning", show=False)
+            with dpg.tooltip(self._preset_info):
+                self._preset_info_detail = dpg.add_text("", wrap=360)
 
     def _build_map_canvas(self):
         if not self._map_native_input:
@@ -1603,8 +1582,37 @@ class SetupMixin:
                          - 2 * sp.window_padding[1] - sp.item_spacing[1] - 20)
             if dpg.get_item_configuration("score_panel")["height"] != height:
                 dpg.configure_item("score_panel", height=height)
+        self._update_map_fill_width()
+        self._update_score_column_widths()
         self._sync_map_size()
 
-    # ── Popup builders ────────────────────────────────────────────────────────
+    def _update_score_column_widths(self):
+        spacing = self.theme.palette.spacing
+        panel_width = dpg.get_item_rect_size("score_panel")[0]
+        if panel_width <= 0:
+            return
+        # Reserve the outer padding, column gaps, and a scrollbar gutter.
+        available = (panel_width - 2 * spacing.window_padding[0]
+                     - 2 * spacing.item_spacing[0] - 16)
+        width = max(1, int(available // 3))
+        for column in ("score_column_left", "score_column_middle", "score_column_right"):
+            if dpg.get_item_configuration(column)["width"] != width:
+                dpg.configure_item(column, width=width)
 
-    # ── Shared dialog scaffolding ─────────────────────────────────────────────
+    def _update_map_fill_width(self):
+        # Image dimensions exclude frame padding; match the adjacent text button.
+        button_height = dpg.get_item_rect_size(self._more_btn)[1]
+        if button_height > 0:
+            icon_size = max(1, int(button_height - 2 * self.theme.palette.spacing.frame_padding[1]))
+            if dpg.get_item_configuration(self._cam_btn)["height"] != icon_size:
+                dpg.configure_item(self._cam_btn, width=icon_size, height=icon_size)
+        available = dpg.get_item_rect_size("map_container")[0]
+        fixed = [dpg.get_item_rect_size(tag)[0] for tag in
+                 ("map_fill_label", "map_overlay_controls", "map_save_controls")]
+        if available <= 0 or any(width <= 0 for width in fixed):
+            return
+        # Four table cells, the fill-label gap, and clearance for the stretch cell.
+        spacing = self.theme.palette.spacing.item_spacing[0]
+        width = max(40, min(225, int(available - sum(fixed) - 32 - spacing - 8)))
+        if dpg.get_item_configuration(self._fill_combo)["width"] != width:
+            dpg.configure_item(self._fill_combo, width=width)

@@ -64,13 +64,9 @@ def _top_credit(P, ref, target, soft_k, want_soft):
 def representation_from_opportunity(
     opp: OpportunityResult,
     *,
-    mode: str = "proportional",
     unclipped: bool = True,
 ) -> tuple[float, float, dict, dict]:
     """Compute per-group ratings and the aggregate opportunity penalty.
-
-    ``mode`` is accepted for configuration compatibility but currently does not
-    select a different calculation.
 
     Returns:
         agg_rating -- T-weighted 0-100 (display only).

@@ -1,10 +1,11 @@
-"""Ensemble tool: repeat full runs until a count or duration is reached."""
+"""Batch Runs tool: repeat full runs until a count or duration is reached."""
 from ._common import (
     _DIALOG_GAP,
     _DIALOG_PAD,
     _DIALOG_RM,
     AlgorithmStatus,
     dpg,
+    log,
     output_dir,
     threading,
     time,
@@ -14,17 +15,17 @@ _ENS_W = 460
 _ENS_TAG = "popup_ensemble"
 _STEP_W = 24          # the "-" / "+" buttons beside the progress bar
 # Light mode only: the palette's near-white default button disappears against
-# the dialog, so the ensemble window's buttons step down to a mid gray.
+# the dialog, so the batch window's buttons step down to a mid gray.
 _ENS_BTN = {"bg": (206, 211, 220), "hover": (190, 197, 210), "active": (174, 183, 200),
             "text": (22, 26, 35),
             "off_bg": (228, 231, 236), "off_text": (150, 156, 168)}
 
 
 class EnsembleMixin:
-    """Ensemble tool: repeat full runs until a count or duration is reached."""
+    """Batch Runs tool: repeat full runs until a count or duration is reached."""
 
     def _sync_ensemble_controls(self) -> None:
-        """Ensemble needs an open map, an idle chain, and Relight off (Relight
+        """Batch Runs needs an open map, an idle chain, and Fine Tune off (Fine Tune
         chains each run onto the last). Called every frame."""
         has_map = self.runner is not None and self.runner.gdf is not None
         busy = self.state.status in (AlgorithmStatus.RUNNING,
@@ -32,21 +33,25 @@ class EnsembleMixin:
                                      AlgorithmStatus.PAUSED)
         busy = busy or self._session_workers_busy() or self._session_action_pending()
         dpg.configure_item(self._ensemble_item,
-                           enabled=has_map and not busy and not self._relight_active)
-        # The window may already be open when Relight gets armed; Relight
+                           enabled=has_map and not busy and not self._fine_tune_active)
+        # The window may already be open when Fine Tune gets armed; Fine Tune
         # would reseed every run from the on-screen map, so block Start too.
         if dpg.does_item_exist(_ENS_TAG) and not self._ensemble_active:
             dpg.configure_item(self._ens_start_btn,
-                               enabled=has_map and not busy and not self._relight_active)
+                               enabled=has_map and not busy and not self._fine_tune_active)
 
     def _on_open_ensemble(self) -> None:
         if self._queue_session_action(self._on_open_ensemble):
             return
         if dpg.does_item_exist(_ENS_TAG):
             dpg.configure_item(_ENS_TAG, show=True)
+            self._sync_workflow_backdrop()
             return
         wrap = _ENS_W - 2 * _DIALOG_PAD
-        with self._dialog("Ensemble", _ENS_TAG, (_ENS_W, 360), modal=False):
+        from mosaic.ensemble_parallel import default_workers
+        self._ens_worker_count = getattr(self, "_ens_worker_count", None) or default_workers()
+        self._ens_parallel = getattr(self, "_ens_parallel", False)
+        with self._dialog("Batch Runs", _ENS_TAG, (_ENS_W, 360), modal=False):
             dpg.add_text(
                 "Repeat full runs with the current map and settings. "
                 "Save each completed map and its metrics.",
@@ -116,7 +121,7 @@ class EnsembleMixin:
                     dpg.add_text(
                         "Estimated score change and bootstrap interval for each "
                         "setting. Raising/falling describes the setting's latest "
-                        "adjustment. Beta estimates do not guarantee improvement.",
+                        "adjustment.",
                         wrap=300)
             # Results views: one button per pop-out, enabled once runs exist.
             dpg.add_spacer(height=6)
@@ -152,6 +157,7 @@ class EnsembleMixin:
                 dpg.bind_item_theme(close, self.theme.antinudge_theme)
 
         self._sync_ensemble_theme()
+        self._sync_workflow_backdrop()
 
     def _on_open_ens_advanced(self) -> None:
         if self._queue_session_action(self._on_open_ens_advanced):
@@ -162,15 +168,29 @@ class EnsembleMixin:
             dpg.focus_item(tag)
             return
         w = 400
-        with self._dialog("Ensemble Advanced", tag, (w, 260), modal=False,
+        from mosaic.ensemble_parallel import available_cpus
+        with self._dialog("Batch Runs Advanced", tag, (w, 340), modal=False,
                           secondary=("Close",
                                      lambda: dpg.configure_item(tag, show=False))):
+            self._ens_parallel_chk = dpg.add_checkbox(
+                label="Parallel runs", default_value=self._ens_parallel,
+                callback=self._on_ensemble_parallel)
+            self.theme.text(
+                "Availability depends on your computer. If parallel runs fail, "
+                "turn this off and try again.", "muted",
+                wrap=w - 2 * _DIALOG_PAD)
+            with dpg.group(tag="ens_workers_row", horizontal=True, show=self._ens_parallel):
+                self._ens_workers = dpg.add_input_int(
+                    default_value=self._ens_worker_count, min_value=1, min_clamped=True,
+                    max_value=available_cpus(), max_clamped=True, width=120,
+                    callback=self._on_ensemble_workers)
+                self.theme.text("workers", "body")
+            dpg.add_spacer(height=8)
             self._ens_keep_best_chk = dpg.add_checkbox(
                 label="Keep best map", default_value=self._ens_keep_best,
                 callback=lambda s, v: setattr(self, "_ens_keep_best", v))
             self.theme.text(
-                "Keep each run's lowest-scoring map instead of the map it "
-                "ends on. Applies from the next Start.", "muted",
+                "Save each run's lowest-scoring map.", "muted",
                 wrap=w - 2 * _DIALOG_PAD)
             dpg.add_spacer(height=8)
             self._ens_targeting_chk = dpg.add_checkbox(
@@ -178,10 +198,9 @@ class EnsembleMixin:
                 callback=self._on_targeting_toggle)
             from mosaic.targeting import FIRST_FIT, MAX_ITERATIONS, WARMUP_RUNS
             self.theme.text(
-                f"Experiment with run settings to seek lower scores. "
-                f"Tuning starts after {FIRST_FIT} runs; the first {WARMUP_RUNS} "
-                f"are marked warm-up. No improvement is guaranteed. "
-                f"Maximum {MAX_ITERATIONS:,} iterations per run.",
+                f"Tune run settings after {FIRST_FIT} runs to seek lower scores. "
+                f"The first {WARMUP_RUNS} are warm-up; "
+                f"each run uses at most {MAX_ITERATIONS:,} iterations.",
                 "muted", wrap=w - 2 * _DIALOG_PAD)
             # Only meaningful with Targeting, so only shown with it.
             with dpg.group(tag="ens_tail_group", show=self._ens_targeting):
@@ -194,6 +213,13 @@ class EnsembleMixin:
                     "Needs more runs and more fitting time.",
                     "muted", wrap=w - 2 * _DIALOG_PAD - 20, indent=20)
         self._sync_ens_advanced()
+
+    def _on_ensemble_parallel(self, sender, value) -> None:
+        self._ens_parallel = bool(value)
+        dpg.configure_item("ens_workers_row", show=self._ens_parallel)
+
+    def _on_ensemble_workers(self, sender, value) -> None:
+        self._ens_worker_count = max(1, int(value))
 
     def _on_target_tail_toggle(self, sender, value) -> None:
         """Enable Keep best map with lower-tail targeting; users can uncheck it."""
@@ -208,9 +234,10 @@ class EnsembleMixin:
         self._sync_ens_advanced()
 
     def _sync_ens_advanced(self) -> None:
-        """Advanced options are fixed for the ensemble in progress."""
+        """Advanced options are fixed for the batch in progress."""
         if dpg.does_item_exist("popup_ens_advanced"):
-            for chk in (self._ens_keep_best_chk, self._ens_targeting_chk):
+            for chk in (self._ens_keep_best_chk, self._ens_targeting_chk,
+                        self._ens_parallel_chk, self._ens_workers):
                 dpg.configure_item(chk, enabled=not self._ensemble_active)
             dpg.configure_item(self._ens_tail_chk, enabled=not self._ensemble_active)
 
@@ -268,24 +295,87 @@ class EnsembleMixin:
         dpg.configure_item("ens_duration_row", show=mode == "Duration")
         dpg.configure_item("ens_unlimited_row", show=mode == "Unlimited")
 
+    def _clear_ensemble_results(self) -> bool:
+        """Release browsing state after the batch worker has exited."""
+        writer = getattr(self, "_ens_writer", None)
+        if writer is None:
+            return True
+        try:
+            if not writer.clear_cache():
+                log.warning("Batch Runs recovery data retained at %s", writer.internal_folder)
+        except OSError:
+            log.exception("Could not clear batch cache %s", writer.internal_folder)
+            dpg.set_value(self._ens_status, "Could not clear cache; close or reset to retry.")
+            return False
+        self._ens_queries = {}
+        self._ens_query_used = {}
+        self._ens_writer = None
+        self._ens_source_gdf = None
+        self._ens_map_writer = None
+        self._ens_map_view = None
+        for tag in ("popup_ens_hist", "popup_ens_scatter", "popup_ens_roster", "popup_ens_map",
+                    "ens_map_texture"):
+            if dpg.does_item_exist(tag):
+                dpg.delete_item(tag)
+        for name in ("_ens_hist_btn", "_ens_scatter_btn", "_ens_roster_btn", "_ens_map_btn"):
+            item = getattr(self, name, None)
+            if item is not None and dpg.does_item_exist(item):
+                dpg.configure_item(item, enabled=False)
+        return True
+
+    def _shutdown_ensemble(self) -> threading.Thread | None:
+        """Finish exports and cache readers before releasing storage on app exit."""
+        writer = getattr(self, "_ens_writer", None)
+        if writer is None:
+            return
+        if self._ensemble_active:
+            with self._ens_progress.lock:
+                self._ens_progress.stop_requested = True
+            self.state.request_stop()
+        worker = getattr(self, "algorithm_thread", None)
+        queries = [job[1] for job in getattr(self, "_ens_queries", {}).values()]
+
+        def finish():
+            if worker is not None and worker.ident is not None:
+                worker.join()
+            for query in queries:
+                query.result()
+            try:
+                if not writer.clear_cache():
+                    log.warning("Batch Runs recovery data retained at %s", writer.internal_folder)
+            except OSError:
+                log.exception("Could not clear batch cache %s", writer.internal_folder)
+
+        cleanup = threading.Thread(target=finish, name="batch-cleanup", daemon=False)
+        cleanup.start()
+        return cleanup
+
     def _on_close_ensemble(self) -> None:
-        if not self._ensemble_active:
+        if self._queue_session_action(self._on_close_ensemble):
+            return
+        if self._ensemble_active or self._wait_for_workers(self._on_close_ensemble):
+            return
+        if self._on_ensemble_reset():
             dpg.configure_item(_ENS_TAG, show=False)
+            if dpg.does_item_exist("popup_ens_advanced"):
+                dpg.configure_item("popup_ens_advanced", show=False)
+            self._sync_workflow_backdrop()
 
     def _ensemble_settings(self, spec) -> dict:
-        """What the ensemble folder records about how it was made."""
+        """What the batch folder records about how it was made."""
         import dataclasses
         s = self.state
         (hot_name,) = s.get("hot_start_filename")
         return {
             "shapefile": s.shapefile_path,
-            "ensemble": {
+            "batch": {
                 "end": spec.mode,
                 "count": spec.count if spec.mode == "count" else None,
                 "duration_minutes": (spec.duration_s / 60.0
                                      if spec.mode == "duration" else None),
                 "base_seed": spec.base_seed,
                 "targeting": spec.targeting,
+                "workers_requested": spec.workers,
                 "map_kept": "best" if spec.keep_best else "final",
                 # Hinge sits outside presets; record what hinge_chance measures.
                 "hinge_threshold": (s.score_config.hinge_threshold
@@ -303,6 +393,7 @@ class EnsembleMixin:
                 "flip_midpoint": s.flip_midpoint,
                 "tree_mode": s.tree_mode,
                 "hot_start": hot_name or None,
+                "locked_districts": [d + 1 for d in s.hot_start_locked_districts],
             },
             "annealing": dataclasses.asdict(s.annealing_config),
             "preset": {"mosaic_preset": 1, **self._preset_from_widgets()},
@@ -311,9 +402,6 @@ class EnsembleMixin:
     def _on_ensemble_start(self) -> None:
         if self._queue_session_action(self._on_ensemble_start):
             return
-        from datetime import datetime
-        from uuid import uuid4
-
         from mosaic.ensemble import (
             EnsembleProgress,
             EnsembleSpec,
@@ -324,8 +412,8 @@ class EnsembleMixin:
         )
         if self._ensemble_active or self.runner is None or self.runner.gdf is None:
             return
-        if self._relight_active:
-            dpg.set_value(self._ens_status, "Clear Relight to start an ensemble.")
+        if self._fine_tune_active:
+            dpg.set_value(self._ens_status, "Stop Fine-Tuning to start a batch.")
             return
         if self._wait_for_workers(self._on_ensemble_start):
             return
@@ -339,6 +427,7 @@ class EnsembleMixin:
             base_seed=seed,
             keep_best=self._ens_keep_best,
             targeting=self._ens_targeting,
+            workers=self._ens_worker_count if self._ens_parallel else 1,
         )
         progress = EnsembleProgress()
         if spec.targeting:
@@ -357,19 +446,23 @@ class EnsembleMixin:
         col = self._loaded_config.id_col if self._loaded_config else ""
         if col and col in self.runner.gdf.columns:
             precinct_ids, id_col = self.runner.gdf[col].tolist(), col
-        folder = output_dir() / (
-            f"ensemble_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid4().hex[:8]}")
+        parent = output_dir()
         try:
-            writer = EnsembleWriter(folder, precinct_ids, id_col,
-                                    summary_columns(data_available(
-                                        self.runner, self.state.score_config), tuned))
+            writer = EnsembleWriter.create(parent, precinct_ids, id_col,
+                                           summary_columns(data_available(
+                                               self.runner, self.state.score_config), tuned))
             # Snapshot now: targeting rewrites run settings in state per run.
             self._ens_settings0 = self._ensemble_settings(spec)
             writer.write_settings(self._ens_settings0)
         except Exception as e:
-            dpg.set_value(self._ens_status, f"Could not create {folder}: {e}")
+            dpg.set_value(self._ens_status, f"Could not create a batch in {parent}: {e}")
             return
 
+        if not self._clear_ensemble_results():
+            writer.finalize()
+            writer.clear_cache()
+            return
+        folder = writer.folder
         self._ens_writer = writer
         self._ens_source_gdf = self.runner.gdf
         self._ens_spec = spec
@@ -379,13 +472,12 @@ class EnsembleMixin:
         self._build_target_table()
         self._ensemble_active = True
         self._clear_all_series()
-        self.state.update(status_message="Ensemble running")
+        self.state.update(status_message="Batch Runs running")
         self.algorithm_thread = threading.Thread(
-            target=run_ensemble, name="ensemble", daemon=False,
+            target=run_ensemble, name="batch", daemon=False,
             args=(self.runner, self.state, spec, writer, self._ens_progress))
         self.algorithm_thread.start()
 
-        self._freeze_main(True)
         dpg.configure_item(self._ens_hist_btn, enabled=True)
         dpg.configure_item(self._ens_scatter_btn, enabled=True)
         dpg.configure_item(self._ens_roster_btn, enabled=True)
@@ -419,7 +511,7 @@ class EnsembleMixin:
                     c: self.theme.text("", "body" if c == "name" else "muted")
                     for c in self._TARGET_COLS})
 
-    def _show_targeting(self, run: int) -> None:
+    def _show_targeting(self) -> None:
         t = self._ens_progress.targeter
         if t is None:
             return
@@ -465,8 +557,14 @@ class EnsembleMixin:
                 self._ens_spec.duration_s = shrink_duration(
                     self._ens_spec.duration_s, time.time() - p.started)
 
-    def _on_ensemble_reset(self) -> None:
-        """Clear the finished ensemble's readout. Files and views are untouched."""
+    def _on_ensemble_reset(self) -> bool:
+        """Clear finished results and readouts while keeping exported files."""
+        if self._queue_session_action(self._on_ensemble_reset):
+            return False
+        if self._ensemble_active or self._wait_for_workers(self._on_ensemble_reset):
+            return False
+        if not self._clear_ensemble_results():
+            return False
         dpg.set_value(self._ens_bar, 0.0)
         dpg.set_value(self._ens_status, "Not started.")
         dpg.set_value(self._ens_eta, "")
@@ -475,13 +573,20 @@ class EnsembleMixin:
         dpg.configure_item("ens_target_box", show=False)
         dpg.configure_item(self._ens_reset_btn, enabled=False)
         dpg.configure_item(self._ens_open_btn, enabled=False)
+        return True
 
     def _update_ensemble_ui(self) -> None:
-        """Per-frame refresh while an ensemble runs; replaces _update_ui."""
+        """Per-frame refresh while a batch runs; replaces _update_ui."""
         p = self._ens_progress
         with p.lock:
             done, cur, started = p.runs_done, p.current_run, p.started
             finished, error, stopping = p.finished, p.error, p.stop_requested
+            workers, active, notice = p.workers, p.active_runs, p.notice
+            starting = p.starting_workers
+            ready, requested = p.workers_ready, p.workers_requested
+            active_fraction = p.active_fraction
+            active_it, active_max = p.active_iterations, p.active_max_iterations
+            eta, expected_runs = p.eta_seconds, p.expected_runs
         with p.lock:
             count, duration, done_elapsed = (self._ens_spec.count,
                                              self._ens_spec.duration_s,
@@ -491,6 +596,9 @@ class EnsembleMixin:
         (it, max_it) = self.state.get("current_iteration", "max_iterations")
         run_frac = it / max_it if max_it else 0.0
         in_run = cur > done
+        if workers > 1:
+            run_frac = active_fraction
+            in_run = active > 0
         if mode == "count":
             frac = (done + (run_frac if in_run else 0.0)) / count
             line = f"Run {min(cur, count)} of {count}"
@@ -508,18 +616,36 @@ class EnsembleMixin:
                        else False)
                 dpg.configure_item(self._ens_shrink_btn, enabled=can)
             if not stopping:
-                dpg.set_value(self._ens_status,
-                              f"{line}  --  {done} complete  --  "
-                              f"iteration {it:,} / {max_it:,}")
-                dpg.set_value(self._ens_eta, _estimate(
-                    mode, count, duration, done, in_run, elapsed,
-                    done_elapsed, run_frac) if mode != "unlimited"
-                    else "Runs until Force Stop.")
-            self._show_targeting(max(cur, 1))
+                status_line = (f"{done} complete -- {active} active -- {workers} workers"
+                               if workers > 1 else
+                               f"{line}  --  {done} complete  --  iteration {it:,} / {max_it:,}")
+                if workers > 1 and mode == "count":
+                    status_line = (f"{done} of {count} complete -- "
+                                   f"{active} active -- {workers} workers")
+                if workers > 1 and active_max:
+                    status_line += f"\nIterations: {active_it:,} / {active_max:,}"
+                dpg.set_value(self._ens_status, status_line + (f"\n{notice}" if notice else ""))
+                if workers > 1:
+                    estimate = (f"Est. time left: {_clock(max(0, eta))}"
+                                if eta is not None else "Estimating...")
+                    if mode == "duration" and expected_runs is not None:
+                        estimate += f" -- about {expected_runs} runs"
+                    if mode == "unlimited":
+                        estimate = "Runs until Force Stop."
+                    dpg.set_value(self._ens_eta, f"{estimate} -- elapsed {_clock(elapsed)}")
+                else:
+                    dpg.set_value(self._ens_eta, _estimate(
+                        mode, count, duration, done, in_run, elapsed,
+                        done_elapsed, run_frac) if mode != "unlimited"
+                        else "Runs until Force Stop.")
+                if starting:
+                    dpg.set_value(self._ens_status, f"Starting workers: {ready} / {requested}")
+                    dpg.set_value(self._ens_eta, "")
+                    dpg.set_value(self._ens_bar, 0.0)
+            self._show_targeting()
             return
 
         self._ensemble_active = False
-        self._freeze_main(False)
         dpg.configure_item(self._ens_start_btn, enabled=True)
         self._lock_end_condition(False)
         dpg.configure_item(self._ens_stop_btn, enabled=False)
@@ -538,11 +664,11 @@ class EnsembleMixin:
             msg = f"Force stopped: {done} runs kept ({_clock(elapsed)})."
         else:
             msg = f"Finished: {done} runs in {_clock(elapsed)}."
-        dpg.set_value(self._ens_status, msg)
-        self._show_targeting(done + 1)
+        dpg.set_value(self._ens_status, msg + (f"\n{notice}" if notice else ""))
+        self._show_targeting()
         # The main window's charts and map describe no single run; start clean.
-        self._on_reset()
-        self.state.update(status_message=f"Ensemble: {done} runs saved")
+        self._reset_run_state()
+        self.state.update(status_message=f"Batch Runs: {done} runs saved")
 
 
 def unlimited_progress(elapsed_s: float) -> float:

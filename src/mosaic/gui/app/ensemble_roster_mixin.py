@@ -1,4 +1,4 @@
-"""Ensemble Roster: filter runs by up to five metric ranges, list the matches."""
+"""Batch Runs Roster: filter runs by up to five metric ranges, list the matches."""
 from ._common import dpg, np
 from .ensemble_views_mixin import _BAR_RGBA, _metric_label
 
@@ -80,8 +80,8 @@ _SHORT = {
     "opportunity_asian": "Opp. Asian",
     "neighborhood_severance_penalty": "Severance",
     "community_dispersion_penalty": "Dispersion",
-    "alignment_mean_retention": "Align. Mean",
-    "alignment_min_retention": "Align. Min",
+    "alignment_mean_retention": "Continuity Mean",
+    "alignment_min_retention": "Continuity Min",
     "iterations": "Iterations",
     "n3_probability": "N3",
     "flip_midpoint": "Flip Mid.",
@@ -101,19 +101,12 @@ def fmt_value(col: str, raw: float) -> str:
     return f"{v:,.{places}f}{suffix}"
 
 
-def display_values(col: str, raws) -> np.ndarray:
-    """Raw values in display units, rounded as shown, so filtering agrees
-    with what the table prints."""
-    scale, places, _ = fmt_rule(col)
-    return np.round(np.asarray(raws, dtype=float) * scale, places)
-
-
 def snap(v: float, places: int) -> float:
     return round(v, places) + 0.0
 
 
 class EnsembleRosterMixin:
-    """Ensemble Roster: filter runs by up to five metric ranges, list the matches."""
+    """Batch Runs Roster: filter runs by up to five metric ranges, list the matches."""
 
     def _on_open_ens_roster(self) -> None:
         if self._queue_session_action(self._on_open_ens_roster):
@@ -129,7 +122,7 @@ class EnsembleRosterMixin:
         self._roster_table_cols: tuple = ()
         self._roster_sort = (0, False)        # (column index, descending)
         vp_w = dpg.get_viewport_client_width() or 1300
-        with dpg.window(label="Ensemble Roster", tag=_ROSTER_TAG,
+        with dpg.window(label="Batch Runs Roster", tag=_ROSTER_TAG,
                         width=_W, height=_H, pos=[max(20, vp_w - _W - 60), 80],
                         # Width is locked (min == max); height drags freely.
                         min_size=[_W, 260], max_size=[_W, 4000],
@@ -231,7 +224,7 @@ class EnsembleRosterMixin:
                            enabled=len(self._roster) < _MAX_CRITERIA)
 
     def _roster_bounds(self, crit: dict, reset: bool = False) -> None:
-        """Fit the track to the ensemble's range so far. A pinned handle (left
+        """Fit the track to the batch's range so far. A pinned handle (left
         at the edge) follows the data outward; one set inside it never moves,
         so a new run past a chosen limit stays excluded."""
         col = crit["col"]

@@ -1,4 +1,4 @@
-"""Ensemble Map: a small static map of any completed run. Deliberately not
+"""Batch Runs Map: a small static map of any completed run. Deliberately not
 the main map: no zoom, pan, overlays, or labels, and its own texture, so it
 never touches the main view or the chain."""
 from ._common import MapView, dpg, log, np, threading
@@ -13,7 +13,7 @@ _HEADER_W = 30 + 120 + 24 + 24 + _NOTE_W + 6 * 8
 
 
 class EnsembleMapMixin:
-    """Ensemble Map: a small static map of any completed run."""
+    """Batch Runs Map: a small static map of any completed run."""
 
     def _on_open_ens_map(self) -> None:
         if self._queue_session_action(self._on_open_ens_map):
@@ -31,16 +31,17 @@ class EnsembleMapMixin:
         self._ens_map_error = ""
         self._ens_map_read_error = False
         vp_w = dpg.get_viewport_client_width() or 1300
-        with dpg.window(label="Ensemble Map", tag=_MAP_TAG, autosize=True,
+        with dpg.window(label="Batch Runs Map", tag=_MAP_TAG, autosize=True,
                         pos=[max(20, vp_w - _W - 90), 120], no_resize=True,
                         no_collapse=True, no_scrollbar=True):
             with dpg.group(horizontal=True):
-                dpg.add_text("Run:")
+                dpg.add_text("Map:")
                 self._ens_map_run = dpg.add_input_int(
                     default_value=1, min_value=1, min_clamped=True,
                     width=120, step=0, callback=lambda: self._refresh_ens_map(True))
                 with dpg.tooltip(self._ens_map_run):
-                    dpg.add_text("Enter a completed run number.")
+                    dpg.add_text("Browse saved maps in completion order. "
+                                 "The run ID appears beside it.")
                 dpg.add_button(label="<", width=24,
                                callback=lambda: self._step_ens_map(-1))
                 dpg.add_button(label=">", width=24,
@@ -62,8 +63,8 @@ class EnsembleMapMixin:
             return
         self._on_open_ens_map()
         count = self._sync_ens_map_runs()
-        number = int(str(run_id).removeprefix('run_'))
-        if 1 <= number <= count:
+        number = self._ens_writer.store.run_position(run_id)
+        if number is not None and 1 <= number <= count:
             dpg.set_value(self._ens_map_run, number)
         self._refresh_ens_map(True)
 
@@ -129,7 +130,7 @@ class EnsembleMapMixin:
                     if not mv.load(gdf, cancelled=stale):
                         error = "Map unavailable."
                 except Exception:
-                    log.exception("Ensemble map could not be prepared")
+                    log.exception("Batch Runs map could not be prepared")
                     error = "Map unavailable."
 
                 def publish():
@@ -157,6 +158,7 @@ class EnsembleMapMixin:
             self._ens_map_loading = False
             self._ens_map_error = ""
             self._ens_map_read_error = False
+            self._ens_map_run_label = ""
             dpg.set_value(self._ens_map_run, 1)
             dpg.delete_item(self._ens_map_canvas, children_only=True)
         count = self._sync_ens_map_runs()
@@ -170,13 +172,13 @@ class EnsembleMapMixin:
         mode = self.theme.palette.name
         sig = (selected, self._ens_map_gdf_id, mode)
         dpg.set_value(self._ens_map_note, "Read failed." if self._ens_map_read_error
-                      else f"of {count:,}")
+                      else getattr(self, "_ens_map_run_label", ""))
         if sig == self._ens_map_sig and not force:
             return
         try:
-            _, districts = self._ens_writer.assignments[selected - 1]
+            run_id, districts = self._ens_writer.assignments[selected - 1]
         except Exception:
-            log.exception("Ensemble assignment could not be read")
+            log.exception("Batch Runs assignment could not be read")
             dpg.set_value(self._ens_map_note, "Read failed.")
             self._ens_map_read_error = True
             self._ens_map_view.draw_blank()
@@ -188,5 +190,6 @@ class EnsembleMapMixin:
         n_dist = int(districts.max())
         mv.render_assignment((districts - 1).astype(np.int32), n_dist)
         self._ens_map_read_error = False
-        dpg.set_value(self._ens_map_note, f"of {count:,}")
+        self._ens_map_run_label = f"Run {run_id.removeprefix('run_')}"
+        dpg.set_value(self._ens_map_note, self._ens_map_run_label)
         self._ens_map_sig = sig

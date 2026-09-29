@@ -20,6 +20,33 @@ from __future__ import annotations
 import numpy as np
 
 
+def preserve_locked_labels(
+    label_map: np.ndarray, locked_districts: tuple[int, ...], *, preserve_matches: bool = False,
+) -> np.ndarray:
+    """Reserve starting-plan numbers, retaining geographic order or reference matches."""
+    if not locked_districts:
+        return label_map
+    result = label_map.copy()
+    locked = np.zeros(len(result), dtype=bool)
+    locked[list(locked_districts)] = True
+    reserved = {d + 1 for d in locked_districts}
+    result[locked] = np.flatnonzero(locked) + 1
+    if preserve_matches:
+        collisions = [d for d in np.flatnonzero(~locked) if int(result[d]) in reserved]
+        used = set(map(int, result))
+        number = 1
+        for d in collisions:
+            while number in used:
+                number += 1
+            result[d] = number
+            used.add(number)
+    else:
+        order = np.argsort(label_map, kind="stable")
+        order = order[~locked[order]]
+        result[order] = [n for n in range(1, len(result) + 1) if n not in reserved]
+    return result
+
+
 def geographic_label_map(
     assignment: np.ndarray,
     x: np.ndarray,

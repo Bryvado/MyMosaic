@@ -182,19 +182,6 @@ def _build_camera_icon(fg_rgb: tuple[int, int, int]) -> np.ndarray:
     return (np.asarray(img, dtype=np.float32) / 255.0).ravel()
 
 
-def _build_more_icon(fg_rgb: tuple[int, int, int]) -> np.ndarray:
-    """Procedural 20x20 RGBA three-dot 'more options' glyph (for raw texture)."""
-    from PIL import Image, ImageDraw
-    w = h = _CAMERA_ICON_SIZE
-    img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
-    d = ImageDraw.Draw(img)
-    fg = (*fg_rgb, 255)
-    cy = 9
-    for cx in (4, 9, 14):
-        d.ellipse((cx, cy, cx + 3, cy + 3), fill=fg)
-    return (np.asarray(img, dtype=np.float32) / 255.0).ravel()
-
-
 class _SeriesBuffer:
     """Incremental, self-compacting local history for one plot series.
 
@@ -284,7 +271,7 @@ class _SeriesBuffer:
         idx = bisect.bisect_right(self.xs, max_iter)
         del self.xs[idx:]
         del self.ys[idx:]
-        self.read = new_read
+        self.read = min(self.read, new_read)
         self._compact_end = min(self._compact_end, len(self.xs))
         self._na = min(self._na, len(self.xs))
 
@@ -305,6 +292,7 @@ _DIR_TO_MODE = {"Fair": "fair", "D": "favor_dem", "R": "favor_rep"}
 #
 # (combo label, MapView attribute, data this fill requires)
 _FILL_NONE = "None (District)"
+_FILL_NO_OUTLINE = "District (No Outline)"
 _FILL_OPTIONS: tuple[tuple[str, str, str], ...] = (
     ("Results - Precinct",      "partisan_overlay",             "elections"),
     ("Results - District",      "district_partisan_overlay",    "elections"),
@@ -325,7 +313,6 @@ _FILL_NEEDS = {
 _FILL_ATTRS: tuple[str, ...] = tuple(a for _, a, _ in _FILL_OPTIONS)
 
 
-
 # (display name, bar rgba). Names are spelled out: the contributor chart plots
 # horizontally, so a full label fits on the category axis and no abbreviation
 # table is needed.
@@ -334,7 +321,7 @@ _CONTRIB_BAR_METRICS = [
     ("Excess Splits",           (190, 170, 130, 220)),
     ("Single-County Districts", (160, 200, 130, 220)),
     ("Population Deviation",    (220, 200, 70,  220)),
-    ("Alignment",               (150, 120, 210, 220)),
+    ("Plan Continuity",               (150, 120, 210, 220)),
     ("Polsby-Popper",           (90,  160, 220, 220)),
     ("Reock",                   (60,  190, 200, 220)),
     ("Mean-Median",             (240, 140, 60,  220)),
@@ -375,13 +362,10 @@ _DIALOG_RM    = 6      # right margin inside the content region for the footer
 _MAP_DH       = _MAP_H - 22            # texture pixel height (~368)
 _PLOT_H       = 155    # single-plot height (score row)
 _MAP_MIN_W    = 400    # the map's width follows the window down to this
-_MIN_CLIENT_W = 1300   # minimum window interior required by the control layout
-_LEFT_GAP     = 15     # gap above Run Parameters / Controls / Status headings
-_HALF_PLOT_H  = 126    # Score / Entropy charts; leaves ~20 px above the scores
-# Do not raise this without also raising _TOP_H. These plots are the last items
-# in the _TOP_H container and DPG clips rather than scrolls, so any overflow eats
-# the x-axis off the bottom of both charts. Leave room for the map, toolbar,
-# headings, and spacing when adjusting the chart height.
+_MIN_CLIENT_W = 1050   # reduced minimum for narrow-layout testing
+_LEFT_GAP     = 5      # leave room for the permanent starting-plan row
+_HALF_PLOT_H  = 136    # Score / Entropy charts; retain ~10 px bottom clearance
+# Further height increases need more _TOP_H space to avoid clipping the x-axis.
 _HALF_PLOT_W  = (_MAP_DW - 10) // 2   # width of each half-plot (~429)
 
 
@@ -435,7 +419,8 @@ _HINTS: dict[str, str] = {
         "Combines Polsby-Popper and Reock into one shape rating."
     ),
     "holistic_splitting": (
-        "Measures how much counties are divided among districts. Lower is better."
+        "Combines population dispersion with penalties for excess county splits "
+        "and missed single-county districts. Lower is better."
     ),
     "holistic_proportionality": (
         "Compares expected seat share with statewide vote share."
@@ -556,10 +541,10 @@ __all__ = [
     "_RENDER_TARGET",
     "_CAMERA_ICON_SIZE",
     "_build_camera_icon",
-    "_build_more_icon",
     "_SeriesBuffer",
     "_DIR_TO_MODE",
     "_FILL_NONE",
+    "_FILL_NO_OUTLINE",
     "_FILL_OPTIONS",
     "_FILL_NEEDS",
     "_FILL_ATTRS",

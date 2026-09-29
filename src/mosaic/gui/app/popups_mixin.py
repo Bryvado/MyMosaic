@@ -1,6 +1,7 @@
 """Modal popup builders (settings, help, confirmations)."""
 import math
 
+from mosaic.gui.choice_radio import choice_radio
 from mosaic.scoring.opportunity import GROUPS
 
 from ._common import _DOCS_SHAPEFILE_URL, _DOCS_URL, __version__, dpg, webbrowser
@@ -19,64 +20,87 @@ class PopupsMixin:
 
     def _build_population_popup(self):
         with self._dialog(
-            "Population", "popup_population", (420, 340),
+            "Population", "popup_population", (420, 390),
             show=False,
             secondary=("Close",
                        lambda: dpg.configure_item("popup_population", show=False)),
         ):
-            self._tolerance = dpg.add_slider_float(
-                label="Population Tolerance",
-                default_value=2.5,
-                min_value=_TOL_MIN_PCT, max_value=_TOL_MAX_PCT,
-                format="%.3f %%", width=260,
-                callback=self._on_tolerance_change,
-            )
-            self._tooltip(
-                self._tolerance,
-                "Maximum difference from ideal district population. "
-                "Proposals exceeding this limit are rejected.",
-            )
+            self.theme.text("Population Tolerance", "heading")
+            self.theme.text("Maximum allowed deviation from ideal district population.",
+                            "muted", wrap=390)
+            with dpg.group(horizontal=True):
+                self._tolerance = dpg.add_slider_float(
+                    label="##tolerance_percent",
+                    default_value=2.5,
+                    min_value=_TOL_MIN_PCT, max_value=_TOL_MAX_PCT,
+                    format="", width=260, no_input=True,
+                    callback=self._on_tolerance_change,
+                )
+                self._tolerance_percent_text = dpg.add_text("2.5 %")
             with dpg.group(horizontal=True):
                 self._tolerance_people = dpg.add_slider_int(
                     label="##tolerance_people",
                     default_value=0, min_value=0, max_value=1,
-                    format="", no_input=True, width=155, enabled=False,
+                    format="", no_input=True, width=260, enabled=False,
                     callback=self._on_tolerance_people_change,
                 )
-                self._tolerance_people_text = dpg.add_text("No map loaded")
-            self._tooltip(
-                self._tolerance_people,
-                "Drag in 100-person steps (1 person for small ranges). "
-                "Endpoints retain the percentage limits.",
-            )
+                self._tolerance_people_text = dpg.add_text("0 people")
+            dpg.add_spacer(height=6)
+            dpg.add_separator()
             dpg.add_spacer(height=6)
             with dpg.group(horizontal=True):
                 dpg.add_text("Tolerance Ratchet:")
-                self._tolerance_ratchet_mode = dpg.add_radio_button(
-                    ["Off", "Standard", "Strict"],
+                self._tolerance_ratchet_mode = choice_radio(help_key="ratchet",
+                    items=["Off", "Standard", "Strict"],
                     default_value="Off", horizontal=True,
                     callback=self._on_popdev_score_toggle,
                 )
-            self._tooltip(
-                self._tolerance_ratchet_mode,
-                "Tightens Population Tolerance later in the run.\n"
-                "Off: fixed. Standard: tighten on a new best. "
-                "Strict: tighten at every eligible step.",
-            )
             dpg.add_spacer(height=10)
             dpg.add_separator()
             dpg.add_spacer(height=6)
             self.theme.text("Population Deviation Score - Safe Harbor", "heading")
-            self._pop_dev_harbor = dpg.add_slider_float(
-                label="Safe Harbor",
-                default_value=0.0, min_value=0.0, max_value=5.0,
-                format="%.2f %%", width=260,
-            )
-            self._tooltip(
-                self._pop_dev_harbor,
-                "No Population Deviation penalty inside this band. "
-                "The hard population limit still applies.",
-            )
+            self.theme.text("No population deviation penalty within this band.",
+                            "muted", wrap=390)
+            with dpg.group(horizontal=True):
+                self._pop_dev_harbor = dpg.add_slider_float(
+                    label="##harbor_percent",
+                    default_value=0.0, min_value=0.0, max_value=5.0,
+                    format="", width=260, no_input=True,
+                    callback=self._on_harbor_change,
+                )
+                self._pop_dev_harbor_percent_text = dpg.add_text("0.0 %")
+            with dpg.group(horizontal=True):
+                self._pop_dev_harbor_people = dpg.add_slider_int(
+                    label="##harbor_people",
+                    default_value=0, min_value=0, max_value=1,
+                    format="", no_input=True, width=260, enabled=False,
+                    callback=self._on_harbor_people_change,
+                )
+                self._pop_dev_harbor_people_text = dpg.add_text("0 people")
+        with dpg.handler_registry():
+            dpg.add_key_press_handler(key=dpg.mvKey_Left,
+                                      callback=self._on_population_people_arrow, user_data=-1)
+            dpg.add_key_press_handler(key=dpg.mvKey_Right,
+                                      callback=self._on_population_people_arrow, user_data=1)
+
+    def _on_population_people_arrow(self, sender, app_data, user_data):
+        for prefix, low, high in (("_tolerance", _TOL_MIN_PCT, _TOL_MAX_PCT),
+                                  ("_pop_dev_harbor", 0.0, 5.0)):
+            slider = getattr(self, prefix + "_people")
+            if (dpg.is_item_visible(slider) and dpg.get_item_configuration(slider)["enabled"]
+                    and (dpg.is_item_hovered(slider) or dpg.is_item_focused(slider))):
+                self._step_population_people(prefix, low, high, user_data)
+                break
+
+    def _step_population_people(self, prefix, min_pct, max_pct, direction):
+        ideal = self._ideal_population()
+        if ideal is None:
+            return
+        slider = getattr(self, prefix + "_people")
+        *_, count = self._population_people_scale(ideal, min_pct, max_pct)
+        index = max(0, min(count + 1, dpg.get_value(slider) + direction))
+        dpg.set_value(slider, index)
+        self._on_population_people_change(prefix, min_pct, max_pct)
 
     def _ideal_population(self):
         """Ideal district population, or None before a map and count exist."""
@@ -90,75 +114,98 @@ class PopupsMixin:
         return total / k
 
     def _sync_tolerance_people(self, *_args):
-        """Rescale the people slider to the loaded map, mirroring the percentage.
+        self._sync_population_limit("_tolerance", _TOL_MIN_PCT, _TOL_MAX_PCT)
+        self._sync_harbor_people()
 
-        The percentage is the stored value the run uses; people is a view of it,
-        so a district-count or shapefile change moves people, never tolerance.
-        """
+    def _sync_harbor_people(self):
+        self._sync_population_limit("_pop_dev_harbor", 0.0, 5.0)
+
+    def _sync_population_limit(self, prefix, min_pct, max_pct):
+        """Mirror the stored percentage without changing it on map/count changes."""
+        self._show_population_percent(prefix)
+        slider = getattr(self, prefix + "_people")
+        entry = getattr(self, prefix + "_people_text")
         ideal = self._ideal_population()
         if ideal is None:
-            dpg.configure_item(self._tolerance_people, enabled=False,
+            dpg.configure_item(slider, enabled=False,
                                min_value=0, max_value=1)
-            dpg.set_value(self._tolerance_people, 0)
-            dpg.set_value(self._tolerance_people_text, "No map loaded")
+            dpg.set_value(slider, 0)
+            dpg.set_value(entry, "0 people")
             return
-        low, high, step, first, count = self._tolerance_people_scale(ideal)
-        people = ideal * dpg.get_value(self._tolerance) / 100.0
+        low, high, step, first, count = self._population_people_scale(ideal, min_pct, max_pct)
+        people = ideal * dpg.get_value(getattr(self, prefix)) / 100.0
         # Percent edits and map/count changes keep the exact percentage. The
         # thumb indicates its nearest discrete choice; the readout is the limit.
         index = min(count, max(1, round(people / step) - first + 1)) if count else 0
         choices = (0, index, count + 1)
-        index = min(choices, key=lambda i: abs(self._tolerance_people_at(ideal, i) - people))
-        dpg.configure_item(self._tolerance_people, enabled=high - low >= 1,
+        index = min(choices, key=lambda i: abs(
+            self._population_people_at(ideal, i, min_pct, max_pct) - people))
+        dpg.configure_item(slider, enabled=high - low >= 1,
                            min_value=0, max_value=count + 1)
-        dpg.set_value(self._tolerance_people, index)
-        self._show_tolerance_people(people)
+        dpg.set_value(slider, index)
+        self._show_population_people(prefix, people)
 
     @staticmethod
-    def _tolerance_people_scale(ideal):
+    def _population_people_scale(ideal, min_pct, max_pct):
         """Describe discrete choices without allocating a population-sized list."""
-        low, high = ideal * _TOL_MIN_PCT / 100.0, ideal * _TOL_MAX_PCT / 100.0
+        low, high = ideal * min_pct / 100.0, ideal * max_pct / 100.0
         step = _PEOPLE_SNAP if high - low >= _PEOPLE_SNAP else 1
         first = math.floor(low / step) + 1
         last = math.ceil(high / step) - 1
         return low, high, step, first, max(0, last - first + 1)
 
-    def _tolerance_people_at(self, ideal, index):
-        low, high, step, first, count = self._tolerance_people_scale(ideal)
+    def _population_people_at(self, ideal, index, min_pct, max_pct):
+        low, high, step, first, count = self._population_people_scale(ideal, min_pct, max_pct)
         if index <= 0:
             return low
         if index >= count + 1:
             return high
         return (first + index - 1) * step
 
-    def _show_tolerance_people(self, people):
-        if math.isclose(people, round(people), rel_tol=0, abs_tol=1e-6):
-            value = f"{round(people):,}"
-        elif people < 1:
-            value = f"{people:.3g}"
-        else:
-            value = f"{people:,.2f}".rstrip("0").rstrip(".")
-        dpg.set_value(self._tolerance_people_text, f"{value} people")
+    def _show_population_people(self, prefix, people):
+        dpg.set_value(getattr(self, prefix + "_people_text"), f"{round(people):,} people")
+
+    def _show_population_percent(self, prefix):
+        pct = dpg.get_value(getattr(self, prefix))
+        value = f"{pct:.3f}".rstrip("0").rstrip(".")
+        if "." not in value:
+            value += ".0"
+        dpg.set_value(getattr(self, prefix + "_percent_text"), f"{value} %")
 
     def _on_tolerance_change(self, *_args):
-        self._sync_tolerance_people()
+        self._on_population_percent_change("_tolerance", _TOL_MIN_PCT, _TOL_MAX_PCT)
+
+    def _on_harbor_change(self, *_args):
+        self._on_population_percent_change("_pop_dev_harbor", 0.0, 5.0)
+
+    def _on_population_percent_change(self, prefix, min_pct, max_pct):
+        slider = getattr(self, prefix)
+        pct = round(dpg.get_value(slider) * 10) / 10
+        dpg.set_value(slider, min(max_pct, max(min_pct, pct)))
+        self._sync_population_limit(prefix, min_pct, max_pct)
 
     def _on_tolerance_people_change(self, *_args):
+        self._on_population_people_change("_tolerance", _TOL_MIN_PCT, _TOL_MAX_PCT)
+
+    def _on_harbor_people_change(self, *_args):
+        self._on_population_people_change("_pop_dev_harbor", 0.0, 5.0)
+
+    def _on_population_people_change(self, prefix, min_pct, max_pct):
         ideal = self._ideal_population()
         if ideal is None:
-            self._sync_tolerance_people()
+            self._sync_population_limit(prefix, min_pct, max_pct)
             return
-        low, high, _, _, count = self._tolerance_people_scale(ideal)
+        low, high, _, _, count = self._population_people_scale(ideal, min_pct, max_pct)
         if high - low < 1:
-            self._sync_tolerance_people()
+            self._sync_population_limit(prefix, min_pct, max_pct)
             return
-        index = max(0, min(count + 1, int(dpg.get_value(self._tolerance_people))))
-        people = self._tolerance_people_at(ideal, index)
-        pct = (_TOL_MIN_PCT if index == 0 else _TOL_MAX_PCT if index == count + 1
+        index = max(0, min(count + 1, int(dpg.get_value(getattr(self, prefix + "_people")))))
+        people = self._population_people_at(ideal, index, min_pct, max_pct)
+        pct = (min_pct if index == 0 else max_pct if index == count + 1
                else people / ideal * 100.0)
-        dpg.set_value(self._tolerance,
-                      min(_TOL_MAX_PCT, max(_TOL_MIN_PCT, pct)))
-        self._show_tolerance_people(people)
+        dpg.set_value(getattr(self, prefix), min(max_pct, max(min_pct, pct)))
+        self._show_population_percent(prefix)
+        self._show_population_people(prefix, people)
 
     def _build_seed_popup(self):
         with self._dialog(
@@ -390,8 +437,8 @@ class PopupsMixin:
             )
             self._tooltip(
                 self._hsplit_unclipped,
-                "Keep distinguishing heavily split maps after the standard penalty "
-                "reaches its cap.",
+                "Keep distinguishing population dispersion beyond the clipped band. "
+                "Structural penalties apply in either mode.",
             )
 
             dpg.add_spacer(height=10)
@@ -408,17 +455,17 @@ class PopupsMixin:
             )
 
     def _build_alignment_settings_popup(self):
-        # Non-modal exception: this window spawns a file dialog ("Load reference
-        # plan..."), and a modal-over-modal stack misbehaves in DPG.
+        # The shared workflow backdrop blocks the main app while allowing the
+        # reference picker to open without a nested modal stack.
         with self._dialog(
-            "Alignment Settings", "popup_alignment_settings", (400, 340),
+            "Plan Continuity Settings", "popup_alignment_settings", (400, 340),
             show=False, modal=False,
             secondary=("Close", lambda: dpg.configure_item(
                 "popup_alignment_settings", show=False)),
         ):
             self.theme.text(
-                "Load a reference plan, then choose whose voters to align "
-                "and which districts to score.", "muted", wrap=380,
+                "Load a reference plan, then measure how well districts retain "
+                "their residents or a party's voters.", "muted", wrap=380,
             )
             dpg.add_separator()
             dpg.add_spacer(height=6)
@@ -436,33 +483,31 @@ class PopupsMixin:
 
             # Ask 1 — whose share retention is measured in (needs election data).
             dpg.add_text("Focus:")
-            self._alignment_focus = dpg.add_radio_button(
+            self._alignment_focus = choice_radio(help_key="focus",
                 items=["All residents", "Republican", "Democratic"],
                 default_value="All residents", horizontal=True,
                 callback=self._on_alignment_focus,
             )
-            self._hint(self._alignment_focus, "alignment_focus")
             dpg.add_spacer(height=6)
 
-            # Ask 2 — restrict scoring to the focus party's won districts.
-            # Meaningless without a party focus, so disabled when neutral.
-            self._alignment_restrict = dpg.add_checkbox(
-                label="Only districts that party wins",
-                default_value=False, enabled=False,
-            )
-            self._hint(self._alignment_restrict, "alignment_restrict")
-            dpg.add_spacer(height=6)
+            with dpg.group(tag="alignment_party_controls", show=False):
+                self._alignment_restrict = dpg.add_checkbox(
+                    label="Only districts that party wins",
+                    default_value=False, enabled=False,
+                )
+                self._hint(self._alignment_restrict, "alignment_restrict")
+                dpg.add_spacer(height=6)
 
-            self._alignment_win_threshold = dpg.add_slider_float(
-                label="District win threshold",
-                default_value=0.535, min_value=0.50, max_value=0.70,
-                format="%.3f", width=200,
-            )
-            self._tooltip(
-                self._alignment_win_threshold,
-                "Include a reference district when the selected party's two-party "
-                "vote share is above this value.",
-            )
+                self._alignment_win_threshold = dpg.add_slider_float(
+                    label="District win threshold",
+                    default_value=0.535, min_value=0.50, max_value=0.70,
+                    format="%.3f", width=200,
+                )
+                self._tooltip(
+                    self._alignment_win_threshold,
+                    "Include a reference district when the selected party's two-party "
+                    "vote share is above this value.",
+                )
 
     def _build_partisan_popup(self):
         with self._dialog(
@@ -502,15 +547,10 @@ class PopupsMixin:
             dpg.add_spacer(height=8)
 
             dpg.add_text("Efficiency Gap mode:")
-            self._eg_mode = dpg.add_radio_button(
+            self._eg_mode = choice_radio(help_key="gap_mode",
                 items=["Robust (recommended)", "Static"],
                 default_value="Robust (recommended)",
                 horizontal=True,
-            )
-            self._tooltip(
-                self._eg_mode,
-                "Robust averages Efficiency Gap across modeled election conditions. "
-                "Static uses the loaded vote totals directly.",
             )
             dpg.add_spacer(height=10)
             dpg.add_separator()

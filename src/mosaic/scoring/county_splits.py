@@ -21,8 +21,28 @@ do not guarantee equal optimization pressure relative to other metrics.
 from __future__ import annotations
 
 import numpy as np
+from numba import njit
 
 _SCORE_SCALE = 10.0
+
+
+@njit(cache=True)
+def _county_counts(co_di_pop, allowances):
+    n_counties, n_districts = co_di_pop.shape
+    county_counts = np.zeros(n_districts, dtype=np.int32)
+    excess = 0
+    for c in range(n_counties):
+        touches = 0
+        for d in range(n_districts):
+            if co_di_pop[c, d] > 0:
+                touches += 1
+                county_counts[d] += 1
+        excess += max(0, touches - allowances[c])
+    unified = 0
+    for d in range(n_districts):
+        if county_counts[d] == 1:
+            unified += 1
+    return excess, unified
 
 
 def score_county_splits(
@@ -77,12 +97,7 @@ def score_county_splits(
                                  minlength=n_counties * n_districts)
         co_di_pop  = co_di_flat.reshape(n_counties, n_districts)
 
-    splits = (co_di_pop > 0).sum(axis=1)
-    excess = np.maximum(0, splits - allowances)
-    excess_total = int(excess.sum())
-
-    n_co_per_dist     = (co_di_pop > 0).sum(axis=0)
-    unified_districts = int((n_co_per_dist == 1).sum())
+    excess_total, unified_districts = _county_counts(co_di_pop, allowances)
 
     excess_score  = _SCORE_SCALE * float(excess_total)
     unified_score = _SCORE_SCALE * float(max_unified - unified_districts)

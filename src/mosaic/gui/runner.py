@@ -30,7 +30,7 @@ from mosaic.recom.annealing import (
 from mosaic.recom.flip import flip_rate_curve, flip_step_ig
 from mosaic.recom.recombination import GraphContext, recom_step_ig, recom_step_ig_n3
 from mosaic.scoring import score_plan
-from mosaic.scoring.alignment import AlignmentData
+from mosaic.scoring.alignment import AlignmentData, alignment_ceiling_for_config
 from mosaic.scoring.cache import (
     get_pp_cache_path,
     load_cached_pp_data,
@@ -136,7 +136,7 @@ def _build_score_breakdown(ps, cfg) -> dict:
     _add("Reock", cfg.weight_reock * ps.reock)
     _add("Compactness", cfg.weight_holistic_compactness * ps.holistic_compactness)
     _add("Population Deviation", cfg.weight_pop_deviation * ps.pop_deviation)
-    _add("Alignment", cfg.weight_alignment * ps.alignment)
+    _add("Plan Continuity", cfg.weight_alignment * ps.alignment)
     # MM / EG breakdown re-uses score_plan's exact math by recomputing the
     # per-mode penalty from the stored raw values.
     def _mm_eg_pen(raw: float, mode: str, bound: float) -> float:
@@ -498,7 +498,7 @@ class AlgorithmRunner:
 
     # ── Algorithm ─────────────────────────────────────────────────────────────
 
-    def score_kwargs(self, num_districts: int, tolerance: float) -> dict:
+    def score_kwargs(self, num_districts: int, tolerance: float, score_config=None) -> dict:
         """Prepare score_plan inputs for this map and district count.
 
         Call after per-run minority-cohesion and community-congruence
@@ -523,6 +523,13 @@ class AlgorithmRunner:
             pp_data=self.pp_data,
             reock_data=self.reock_data,
             alignment_data=self.alignment_data,
+            alignment_ceiling=alignment_ceiling_for_config(
+                self.alignment_data,
+                score_config if score_config is not None else self.state.score_config,
+                self.populations, num_districts, tolerance,
+                self.election_arrays[0][0] if self.election_arrays else None,
+                self.election_arrays[0][1] if self.election_arrays else None,
+            ),
             n_districts=num_districts,
             dem_votes=self.election_arrays[0][0] if self.election_arrays else None,
             gop_votes=self.election_arrays[0][1] if self.election_arrays else None,
@@ -545,7 +552,7 @@ class AlgorithmRunner:
          n3_probability, n3_max_attempts_per_stage,
          flip_enabled, flip_midpoint,
          tolerance_ratchet_mode,
-         hot_start_assignment) = self.state.get(
+         hot_start_assignment, locked_districts) = self.state.get(
             "num_districts", "pop_tolerance", "max_iterations", "seed",
             "score_config", "annealing_config",
             "county_bias_enabled", "county_bias",
@@ -553,6 +560,7 @@ class AlgorithmRunner:
             "flip_enabled", "flip_midpoint",
             "tolerance_ratchet_mode",
             "hot_start_assignment",
+            "hot_start_locked_districts",
         )
 
         # If user supplied a seed, seed BOTH RNGs the algorithm touches:
@@ -569,7 +577,7 @@ class AlgorithmRunner:
         ideal_pop = self.populations.sum() / num_districts
         ctx = self.graph_ctx
         tree_mode, = self.state.get("tree_mode")
-        if tree_mode not in ("reference", "compiled", "fast"):
+        if tree_mode not in ("compiled", "fast"):
             self.state.update(status=AlgorithmStatus.ERROR,
                               error_message=f"Unknown tree mode: {tree_mode}")
             return
@@ -580,6 +588,20 @@ class AlgorithmRunner:
         # in the hot loop short-circuits BEFORE np.random.random() is even called,
         # so a pure n=2 run pays only a single bool check per iteration.
         n3_enabled = n3_probability > 0.0
+        movable_edges = None
+        if locked_districts:
+            from mosaic.io.hot_start import HotStartError, validate_district_locks
+            try:
+                can_use_n3 = validate_district_locks(
+                    hot_start_assignment, locked_districts, self.populations,
+                    self.graph, num_districts, tolerance)
+            except HotStartError as exc:
+                self.state.update(status=AlgorithmStatus.ERROR, error_message=str(exc))
+                return
+            locked_nodes = np.isin(hot_start_assignment, locked_districts)
+            movable_edges = ~(locked_nodes[ctx.edge_u] | locked_nodes[ctx.edge_v])
+            n3_enabled = n3_enabled and can_use_n3
+            log.info("Locked starting-plan districts: %s", [d + 1 for d in locked_districts])
         if n3_enabled:
             log.info(
                 f"n=3 ReCom mix enabled: p={n3_probability:.1%}, "
@@ -669,7 +691,7 @@ class AlgorithmRunner:
                 any(t["target"] >= 1 and t["feasible"] for t in _targets.values()),
             )
 
-        _skw = self.score_kwargs(num_districts, tolerance)
+        _skw = self.score_kwargs(num_districts, tolerance, score_config)
         if self.vap_data is not None and score_config.weight_representation:
             from mosaic.scoring.opportunity import _get_prep
 
@@ -733,11 +755,11 @@ class AlgorithmRunner:
             if hot_start_assignment is not None:
                 self.state.update(
                     status=AlgorithmStatus.PARTITIONING,
-                    status_message="Using hot start assignment...",
+                    status_message="Using starting plan...",
                 )
                 assignment = hot_start_assignment.astype(np.int32).copy()
                 log.info(
-                    f"Hot start: skipping bipartition, using preloaded assignment "
+                    f"Starting plan: skipping bipartition, using preloaded assignment "
                     f"({int(assignment.max()) + 1} districts, {len(assignment)} precincts)"
                 )
             else:
@@ -760,13 +782,17 @@ class AlgorithmRunner:
                     self.state.update(status=AlgorithmStatus.IDLE, status_message="")
                     return
                 log.info("Initial partition complete")
-            self.state.update(initial_assignment=assignment.copy())
+            self.state.update(initial_assignment=assignment.copy(),
+                              run_locked_districts=tuple(locked_districts))
 
             # ── Initial score ────────────────────────────────────────────────
             # Neighborhood Severance compares weighted cuts with an expectation
             # fixed by district and precinct counts. It has no starting-plan
             # baseline to initialize here.
             cut_edge_indices = ctx.compute_cut_edges(assignment)
+            # Proposals exclude locked boundaries; scoring retains every cut edge.
+            proposal_cut_indices = (cut_edge_indices if movable_edges is None
+                                    else cut_edge_indices[movable_edges[cut_edge_indices]])
             # Both compactness components share one ordered affected-region
             # scan. A proposal owns its new buffers; rejection leaves the
             # accepted cache unchanged. Recreate the cache for every new run.
@@ -807,6 +833,7 @@ class AlgorithmRunner:
                 self.state.pop_deviation_history.append(current_ps.pop_deviation)
                 self.state.pop_dev_max_history.append(current_ps.pop_dev_max)
                 self.state.pop_dev_mean_history.append(current_ps.pop_dev_mean)
+                self.state.alignment_penalty_history.append(current_ps.alignment)
                 self.state.alignment_mean_ret_history.append(current_ps.alignment_mean_ret)
                 self.state.alignment_min_ret_history.append(current_ps.alignment_min_ret)
                 self.state.representation_black_history.append(current_ps.representation_black)
@@ -825,12 +852,6 @@ class AlgorithmRunner:
                 self.state.minority_cohesion_overall_history.append(current_ps.minority_cohesion)
                 self.state.community_congruence_overall_history.append(
                     current_ps.community_congruence)
-                self.state.representation_counts = [
-                    current_ps.opportunity_black, current_ps.opportunity_latino,
-                    current_ps.opportunity_asian]
-                self.state.representation_ratings = [
-                    current_ps.representation_black, current_ps.representation_latino,
-                    current_ps.representation_asian]
                 self.state.cut_edges_history.append(current_ps.cut_edges)
                 self.state.majority_dem_history.append(
                     _gated(score_config.weight_majority_chance_dem, current_ps.majority_chance_dem))
@@ -857,6 +878,7 @@ class AlgorithmRunner:
                 best_temp_history_len=0,
                 best_acc_history_len=0,
                 score_breakdown=_build_score_breakdown(current_ps, score_config),
+                best_score_breakdown=_build_score_breakdown(current_ps, score_config),
             )
 
             # ── Annealing init ───────────────────────────────────────────────
@@ -948,21 +970,21 @@ class AlgorithmRunner:
                 if flip_enabled and np.random.random() < _flip_p:
                     new_assignment, valid, new_cut_indices = flip_step_ig(
                         ctx, assignment, self.populations, ideal_pop, active_tolerance,
-                        cut_edge_indices,
+                        proposal_cut_indices,
                         county_array=self.county_array,
                         county_bias=effective_bias,
                     )
                 elif n3_enabled and np.random.random() < n3_probability:
                     new_assignment, valid, new_cut_indices = recom_step_ig_n3(
                         ctx, assignment, self.populations, ideal_pop, active_tolerance,
-                        cut_edge_indices,
+                        proposal_cut_indices,
                         county_array=self.county_array, county_bias=effective_bias,
                         max_attempts_per_stage=n3_max_attempts_per_stage,
                     )
                 else:
                     new_assignment, valid, new_cut_indices = recom_step_ig(
                         ctx, assignment, self.populations, ideal_pop, active_tolerance,
-                        cut_edge_indices,
+                        proposal_cut_indices,
                         county_array=self.county_array, county_bias=effective_bias,
                     )
 
@@ -997,6 +1019,8 @@ class AlgorithmRunner:
                         compactness_cache.accept(compactness_proposal)
                     assignment = new_assignment
                     cut_edge_indices = new_cut_indices
+                    proposal_cut_indices = (cut_edge_indices if movable_edges is None
+                                            else cut_edge_indices[movable_edges[cut_edge_indices]])
                     current_ps = proposed_ps
                     self.state.update(
                         current_iteration=iteration,
@@ -1040,6 +1064,7 @@ class AlgorithmRunner:
                     self.state.pop_deviation_history.append(current_ps.pop_deviation)
                     self.state.pop_dev_max_history.append(current_ps.pop_dev_max)
                     self.state.pop_dev_mean_history.append(current_ps.pop_dev_mean)
+                    self.state.alignment_penalty_history.append(current_ps.alignment)
                     self.state.alignment_mean_ret_history.append(current_ps.alignment_mean_ret)
                     self.state.alignment_min_ret_history.append(current_ps.alignment_min_ret)
                     self.state.representation_black_history.append(current_ps.representation_black)
@@ -1058,12 +1083,6 @@ class AlgorithmRunner:
                     self.state.minority_cohesion_overall_history.append(current_ps.minority_cohesion)
                     self.state.community_congruence_overall_history.append(
                         current_ps.community_congruence)
-                    self.state.representation_counts = [
-                        current_ps.opportunity_black, current_ps.opportunity_latino,
-                        current_ps.opportunity_asian]
-                    self.state.representation_ratings = [
-                        current_ps.representation_black, current_ps.representation_latino,
-                        current_ps.representation_asian]
                     self.state.cut_edges_history.append(current_ps.cut_edges)
                     self.state.majority_dem_history.append(
                         _gated(score_config.weight_majority_chance_dem,
@@ -1101,6 +1120,7 @@ class AlgorithmRunner:
                         best_score_history_len=n_score,
                         best_temp_history_len=n_temp,
                         best_acc_history_len=n_acc,
+                        best_score_breakdown=_build_score_breakdown(current_ps, score_config),
                     )
                     # Standard ratchet: only new-best plans are eligible.
                     if ratchet_on and not ratchet_strict:

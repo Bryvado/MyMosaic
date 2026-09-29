@@ -98,7 +98,7 @@
         <a href="#population" class="block hover:text-ink">Population constraints</a>
         <a href="#best" class="block hover:text-ink">Current and best plans</a>
         <a href="#scores" class="block hover:text-ink">Score methodology</a>
-        <a href="#ensemble" class="block hover:text-ink">Ensembles</a>
+        <a href="#batch" class="block hover:text-ink">Batch Runs</a>
         <a href="#reproducibility" class="block hover:text-ink">Reproducibility</a>
         <a href="#credit" class="block hover:text-ink">Attribution</a>
       </nav>
@@ -138,14 +138,14 @@
         <details class="mt-5 rounded-xl border border-line bg-white">
           <summary class="cursor-pointer flex items-center gap-4 px-5 py-4 font-semibold">Exact tree and cut procedure</summary>
           <div class="px-5 pb-5 text-sm">
-            <ol class="space-y-2"><li>Assign a random edge ordering and run a minimum-spanning-tree procedure.</li><li>Choose a root uniformly among tree vertices whose degree is greater than one.</li><li>Calculate the population of every rooted subtree.</li><li>Scan vertices in ascending local node order and take the first parent edge that produces an allowed split.</li><li>Try up to 100 trees before treating the move as unsuccessful.</li></ol>
+            <ol class="space-y-2"><li>Assign a random edge ordering and run a minimum-spanning-tree procedure.</li><li>Choose a root among tree vertices whose degree is greater than one, using the selected tree generator.</li><li>Calculate the population of every rooted subtree.</li><li>Scan vertices in ascending local node order and take the first parent edge that produces an allowed split.</li><li>Try up to 100 trees before treating the move as unsuccessful.</li></ol>
             <p class="mt-3">The district pair is also not uniform: selecting a boundary edge gives pairs with longer graph boundaries more opportunities to be selected.</p>
           </div>
         </details>
 
         <h3 class="mt-8 text-xl font-semibold">Fast tree generation</h3>
-        <p class="mt-2">This option changes how Mosaic randomizes the edge order used to build proposal trees. The default fast mode uses a local xorshift64* random generator for its edge shuffle and root choice. Turning it off uses the reference randomization path. With County-edge bias on, the reference path sorts uniform edge weights with cross-county weights multiplied by the bias B. The fast path draws the same order distribution without sorting: each cross-county edge joins the early part of the order with probability 1/B, and the early and late parts are each shuffled.</p>
-        <p class="mt-3">Both modes apply randomized Kruskal construction, scan for the first population-valid cut in the same node order, and try at most 100 trees. Neither samples spanning trees uniformly. Fast mode uses modulo reduction in its shuffle, which introduces a small sampling bias; it also consumes random values differently, so the same seed does not imply the same proposal sequence across modes.</p>
+        <p class="mt-2">Both tree generators execute the retry loop in Numba, seeded by one NumPy draw per merged region. The standard generator uses Numba's NumPy-compatible random generator for edge shuffles and uniform root selection. Fast tree generation, on by default, uses a local xorshift64* generator with modulo reduction for shuffle indices and root selection, introducing a small sampling bias. Each generator has its own seeded proposal sequence.</p>
+        <p class="mt-3">With County-Edge Bias B, each cross-county edge joins an early pool with probability 1/B; within-county edges always join that pool. Each pool is shuffled, with the early pool first. Standard randomization gives the same edge-order distribution as sorting uniform weights after multiplying cross-county weights by B. Both generators apply randomized Kruskal construction and select the first population-valid cut in ascending local node order, with at most 100 attempts. Timed cuts use a NumPy-driven loop that checks the deadline between attempts. Randomized Kruskal produces a nonuniform distribution of spanning trees.</p>
 
         <h3 class="mt-8 text-xl font-semibold">Three-district recombination</h3>
         <p class="mt-2">When enabled, Mosaic sometimes combines three neighboring districts. It first carves one population-balanced district from the combined region, then divides the remainder into two. This is a two-stage procedure, not a single uniform three-way cut.</p>
@@ -206,11 +206,14 @@
         <p class="mt-4">The current plan is the state from which Mosaic proposes the next move. Because annealing can accept a worse plan, it may not be the best plan encountered. Mosaic separately records an accepted plan only when its total score is strictly lower than the previous best.</p>
         <p class="mt-3">Revert to Best rewinds the assignment, score, iteration, temperature, and chart histories to that recorded point. Exports use the current plan on the map; they do not silently substitute the best plan.</p>
         <details class="mt-5 rounded-xl border border-line bg-white">
-          <summary class="cursor-pointer flex items-center gap-4 px-5 py-4 font-semibold">Relight and Hot Start</summary>
+          <summary class="cursor-pointer flex items-center gap-4 px-5 py-4 font-semibold">Fine Tune and Start from Plan</summary>
           <div class="px-5 pb-5 text-sm space-y-3">
-            <p><strong class="text-ink">Hot Start</strong> uses one loaded assignment as the starting plan. <strong class="text-ink">Relight</strong> instead uses the map currently on screen each time Start is pressed, so successive runs can continue from one another. They cannot be active together.</p>
-            <p>Arming Relight saves the current search settings, then applies a refinement preset: annealing on; Guided cooling; Initial Temp Factor <code>0.01</code>; Guide Point <code>0.80</code>; Launch Watch off; n=3 ReCom Mix <code>50%</code>; flips on; and the flip 50% crossover at <code>75%</code> of the run. It also shows the full plot history instead of limiting plots to the latest 10,000 iterations. It does not replace the selected score weights, iteration count, or population tolerance.</p>
-            <p>Clear Relight restores the saved search settings and removes the current-map start. Reset, loading a new shapefile, or changing the district count also clears it. At Start, the displayed map must still match the selected district count and population tolerance.</p>
+            <p><strong class="text-ink">Start from Plan</strong> uses one loaded assignment as the starting plan. <strong class="text-ink">Fine Tune</strong> instead uses the map currently on screen each time Start is pressed, so successive runs can continue from one another. They cannot be active together.</p>
+            <p><strong class="text-ink">Use Current Map</strong> sets the displayed plan as the starting plan, preserving its district numbers. This snapshot stays fixed across runs until replaced or cleared; it does not apply the Fine Tune settings.</p>
+            <p>Starting-plan district locks preserve the selected districts' exact precinct membership. Proposal selection excludes every boundary touching a locked district, including selection of the third district in a three-district ReCom move. Successful proposals still return all cut edges and receive a full-plan score. The starting plan must satisfy contiguity and population tolerance, and at least two unlocked districts must share a boundary. The tolerance ratchet continues to consider the whole plan, including locked districts.</p>
+            <p>Locked districts also retain their starting-plan numbers. Geographic renumbering reserves those numbers and fills the remaining numbers in geographic order. Reference-based numbering retains nonconflicting reference matches and gives conflicting unlocked districts unused numbers. These label rules follow the displayed run, even if another starting plan is selected afterward.</p>
+            <p>Arming Fine Tune saves the current search settings, then applies a refinement preset: annealing on; Guided cooling; Initial Temp Factor <code>0.01</code>; Guide Point <code>0.80</code>; Launch Watch off; n=3 ReCom Mix <code>50%</code>; flips on; and the flip 50% crossover at <code>75%</code> of the run. It also shows the full plot history instead of limiting plots to the latest 10,000 iterations. It does not replace the selected score weights, iteration count, or population tolerance.</p>
+            <p>Stop Fine-Tuning restores the saved search settings and removes the current-map start. Reset, loading a new shapefile, or changing the district count also clears it. At Start, the displayed map must still match the selected district count and population tolerance.</p>
           </div>
         </details>
       </section>
@@ -255,8 +258,10 @@ Compactness penalty = 0.5 × B(PP) + 0.5 × B(Reock)</pre></div>
 raw_county = Σ_c (P_c/P) × S_c</pre></div>
             <p>The district direction is symmetric: exchange counties and districts to obtain <code>raw_district</code>. The ordinary no-split reference is 1 in either direction. Default mode uses:</p>
             <div class="formula rounded-lg bg-paper-2 px-4 py-3"><pre class="whitespace-pre-wrap">penalty = 0.5 × 45 × max(0, raw_county − 1)
-        + 0.5 × 45 × max(0, raw_district − 1)</pre></div>
-            <p>This default penalty is not capped at 100. The optional clipped scorecard maps each direction between a problem-size reference and <code>1.33 × reference</code>, averages the two 0–100 results, then multiplies by <code>0.20</code>; its actual range is therefore 0–20. County-Edge Bias is a proposal preference, not part of this score.</p>
+        + 0.5 × 45 × max(0, raw_district − 1)
+        + ExcessCount + max(0, SCD_ceiling − SCD_actual)</pre></div>
+            <p>The structural terms use Classic Splitting's population allowances and single-county district ceiling below. Each excess split and missed single-county district adds one point before the County Congruence weight. Removing a fragment can improve both terms. The ceiling is a population-capacity bound, not a guarantee of geographic feasibility.</p>
+            <p>This default penalty is not capped at 100. The optional clipped scorecard maps each dispersion direction between a problem-size reference and <code>1.33 × reference</code>, averages the two 0–100 results, then multiplies by <code>0.20</code>. Only dispersion is capped at 20; the same structural penalties are added afterward. Classic Splitting remains independently weighted and adds to this objective when enabled. County-Edge Bias is a proposal preference, not part of this score.</p>
           </div></details>
           <details class="rounded-xl border border-line bg-white"><summary class="cursor-pointer flex items-center px-5 py-4 font-semibold">Classic Splitting</summary><div class="px-5 pb-5 text-sm space-y-3">
             <p>Classic Splitting has two independent weighted components, not one combined objective. If <code>touches_c</code> is the number of districts containing any population from county <code>c</code>:</p>
@@ -268,15 +273,16 @@ Excess penalty = 10 × ExcessCount</pre></div>
 population-only bound = Σ_c floor(P_c / min district population)
 actual clean = number of districts touching exactly one county
 Single-county penalty = 10 × (population-only bound − actual clean)</pre></div>
-            <p>The displayed “maximum feasible” line is only a population arithmetic bound. It does not prove contiguity or simultaneous drawability. The chart shows raw ExcessCount and actual clean districts, not the two optimizer penalties.</p>
+            <p>The dashed <strong class="text-ink">1cd ceiling</strong> is a population arithmetic bound. It does not prove contiguity or simultaneous drawability. The chart shows raw ExcessCount and actual clean districts, not the two optimizer penalties.</p>
           </div></details>
           <details class="rounded-xl border border-line bg-white"><summary class="cursor-pointer flex items-center px-5 py-4 font-semibold">Population Deviation</summary><div class="px-5 pb-5 text-sm space-y-2"><p>For each district, Mosaic measures the absolute fractional difference from ideal population, subtracts the optional safe-harbor band, squares the remaining excess, and sums across districts.</p><div class="formula rounded-lg bg-paper-2 px-4 py-3">penalty = (100000 / districts) × Σ max(0, |deviation| − safe harbor)²</div><p>The chart shows maximum and mean absolute deviation in percent, not this penalty.</p></div></details>
-          <details class="rounded-xl border border-line bg-white"><summary class="cursor-pointer flex items-center px-5 py-4 font-semibold">Alignment</summary><div class="px-5 pb-5 text-sm space-y-3">
-            <p>Alignment is a one-sided reference-district cohesion measure. Let <code>M_ad</code> be the selected weight from reference district <code>a</code> that lies in proposed district <code>d</code>, <code>G_a = Σ_d M_ad</code>, and <code>f_ad = M_ad/G_a</code>. Then:</p>
+          <details class="rounded-xl border border-line bg-white"><summary class="cursor-pointer flex items-center px-5 py-4 font-semibold">Plan Continuity</summary><div class="px-5 pb-5 text-sm space-y-3">
+            <p>Plan Continuity is a one-sided reference-district cohesion measure. Let <code>M_ad</code> be the selected weight from reference district <code>a</code> that lies in proposed district <code>d</code>, <code>G_a = Σ_d M_ad</code>, and <code>f_ad = M_ad/G_a</code>. Then:</p>
             <div class="formula rounded-lg bg-paper-2 px-4 py-3"><pre class="whitespace-pre-wrap">cohesion_a = Σ_d f_ad²
-penalty = 100 × Σ_a G_a × (1 − cohesion_a) / Σ_a G_a</pre></div>
-            <p>The weight basis is general population by default, or the selected party's votes when party focus is available. An optional restriction includes only reference districts where that party's two-party share is strictly above the threshold (default <code>0.535</code>). The chart shows <code>100 − penalty</code> and the minimum reference-district cohesion.</p>
-            <p>Because the measure is one-sided, merging several intact reference districts into one proposed district is not itself penalized.</p>
+mean_cohesion = Σ_a G_a × cohesion_a / Σ_a G_a
+penalty = 100 × clip(1 − mean_cohesion / ceiling, 0, 1)</pre></div>
+            <p>The weight basis is general population by default, or the selected party's votes when party focus is available. An optional restriction includes only reference districts where that party's two-party share is strictly above the threshold (default <code>0.535</code>). The chart switches between <strong class="text-ink">Penalty</strong> and <strong class="text-ink">Districts</strong>. Penalty is normalized; Avg district and Worst district are the raw weighted mean and minimum reference-district cohesion percentages.</p>
+            <p>The ceiling is a fast population-capacity upper bound computed once from the reference, district count, original population tolerance, and selected weight basis. Each reference is optimistically packed into the largest chunks a proposed district can hold. For party focus, chunk capacity uses the most vote-dense precinct fractions that fit within the population limit. For all-resident scoring, a complementary bound accounts for unavoidable splits when balanced proposed districts cannot be filled by intact references. The smaller applicable upper bound is used. These bounds ignore geography and may be optimistic; no packing solver runs. The ceiling stays fixed when the population-tolerance ratchet tightens.</p><p>Because the measure is one-sided, merging several intact reference districts into one proposed district is not itself penalized. Normalization preserves the underlying weighted-cohesion objective and its raw display values.</p>
           </div></details>
         </div>
 
@@ -416,26 +422,31 @@ r &gt; R95:  tail = (R95−Rs)/18
         <div class="mt-5 rounded-xl border border-line bg-navy-soft/50 px-5 py-4 text-sm text-ink-soft"><strong class="text-ink">Applicability:</strong> Electoral Opportunity excludes a group when its rounded proportional target is below one district or its targeting heuristic finds no qualifying bundle. Neighborhood Severance excludes a group with no positive weighted adjacency. Community Dispersion excludes a group with no qualifying connected core.</div>
       </section>
 
-      <section id="ensemble" class="method-section">
-        <h2 class="text-3xl font-bold tracking-tight">Ensembles</h2>
-        <p class="mt-3">Each run starts from a fresh partition or the loaded Hot Start and retains its final or lowest-scoring plan. With a nonzero base seed, successive runs increment the seed by one. These optimized plans are not uniform samples of valid district plans.</p>
+      <section id="batch" class="method-section">
+        <h2 class="text-3xl font-bold tracking-tight">Batch Runs</h2>
+        <p class="mt-3">Each run starts from a fresh partition or the selected starting plan and retains its final or lowest-scoring plan. Run <em>i</em> uses seed <code>base_seed + i − 1</code> when a nonzero base seed is supplied.</p>
+        <details class="mt-5 rounded-xl border border-line bg-white"><summary class="cursor-pointer flex items-center gap-4 px-5 py-4 font-semibold">Parallel execution</summary><div class="px-5 pb-5 space-y-3 text-sm">
+          <p>Batch Runs defaults to serial execution. When Parallel runs is enabled, the suggested worker count is <code>max(1, min(6, available CPUs − 1))</code>. Execution caps the requested count at available CPUs and, in Count mode, the initial run count. One worker runs serially; multiple workers use spawned processes with separate map data and run state, each inheriting a one-thread limit for numerical libraries. Startup failure falls back to serial execution. Saved settings record requested and actual worker counts.</p>
+          <p>The coordinator dispatches batches of up to one run per worker and saves completed results in arrival order under their assigned run IDs. Roster sorts by run number; Map steps through completion order. After each batch, it checks the current count or duration limit. Reducing the count or reaching the duration limit lets dispatched runs finish. Force Stop cancels active runs and retains saved results.</p>
+          <p>Count progress sums saved runs and each active run’s iteration fraction. Remaining time uses the slowest active run’s projected finish plus future batches times the mean completed-run duration. Before any run finishes, the estimate uses active iteration pace after 2% progress; partitioning time contributes to projected run duration. Duration mode projects whole batches through the time limit.</p>
+        </div></details>
         <details class="mt-5 rounded-xl border border-line bg-white"><summary class="cursor-pointer flex items-center gap-4 px-5 py-4 font-semibold">Summary metrics</summary><div class="px-5 pb-5 space-y-3 text-sm">
           <p>Summaries measure available metrics using unclipped holistic scores and static efficiency gap, regardless of which scores the search optimizes. Hinge is measured only when enabled. The <code>score</code> column is the retained plan’s weighted objective.</p>
-          <p>Histograms and scatterplot statistics use all finite results; the scatterplot may display a subset of points.</p>
+          <p>Histograms and scatterplot statistics use all finite results; scatterplots display at most 2,000 evenly spaced records. Roster filters use the rounded values shown in the table.</p>
         </div></details>
         <details id="targeting" class="mt-5 rounded-xl border border-line bg-white"><summary class="cursor-pointer flex items-center gap-4 px-5 py-4 font-semibold">Targeting (Beta)</summary><div class="px-5 pb-5 space-y-3 text-sm">
           <p>Targeting varies run settings within adaptive bands to seek lower scores. It varies iterations and the n=3 mix, plus flip, temperature, and guide settings when their corresponding features are enabled. Scoring weights remain fixed; iterations are capped at 300,000 per run.</p>
           <p>A regression over recent runs estimates how settings relate to score. The default fits the mean; <strong class="text-ink">Favor lower-tail scores</strong> fits the 20th percentile using all runs in a larger window. If the quantile solver fails, it falls back to least squares.</p>
-          <p>Fitting begins after 10 runs and repeats every five. The first 20 runs are labeled warm-up; adaptation continues throughout the ensemble. A setting’s center moves toward lower estimated scores when its 90% bootstrap interval excludes zero.</p>
-          <p>These beta estimates guide tuning; their intervals are not calibrated confidence guarantees for the adaptive search.</p>
+          <p>Fitting begins after 10 runs and repeats every five. The first 20 runs are labeled warm-up; adaptation continues throughout the batch. A setting’s center moves toward lower estimated scores when its 90% bootstrap interval excludes zero.</p>
+          <p>For each parallel batch, Targeting draws settings from the current bands in run-number order. After the batch finishes, it observes scores in that same order, applying the fitting schedule above; updated bands apply to the next batch. Replaying the learning sequence requires the same actual worker count, seed, inputs, settings, run limit, and computing environment.</p>
         </div></details>
       </section>
 
       <section id="reproducibility" class="method-section">
         <h2 class="text-3xl font-bold tracking-tight">Reproducibility</h2>
-        <p class="mt-4"><strong class="text-ink">A seed alone is not enough.</strong> To attempt an exact replay, set a nonzero seed, turn off <strong class="text-ink">Fast tree generation</strong>, and keep the input file and row order, every run setting and score weight, the starting plan, the Mosaic version, and the computing environment unchanged.</p>
-        <p class="mt-3">For the strongest control over the starting point, reuse the same Hot Start. Mosaic's automatic starting-map builder has a wall-clock cutoff and may restart at a different point on a faster or slower machine.</p>
-        <p class="mt-3">Fast tree generation uses a different randomization path and is not Mosaic's exact-replay mode. Changing a move type also changes how random values are consumed. Even with the reference tree method and the same Hot Start, a seed is not a portable identifier for a plan and does not guarantee bit-for-bit equality across releases or machines.</p>
+        <p class="mt-4">For a replay attempt, reuse the nonzero seed, input file and row order, every run setting and score weight (including <strong class="text-ink">Fast tree generation</strong>), starting plan, Mosaic version, and computing environment.</p>
+        <p class="mt-3">For the strongest control over the starting point, reuse the same starting plan. Mosaic's automatic starting-map builder has a wall-clock cutoff and may restart at a different point on a faster or slower machine.</p>
+        <p class="mt-3">Each tree generator and move mix consumes random values in its own sequence. Exact replay depends on matching the generator, move settings, software versions, and computing environment.</p>
       </section>
 
       <section id="credit" class="method-section">

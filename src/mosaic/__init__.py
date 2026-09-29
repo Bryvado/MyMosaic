@@ -105,13 +105,14 @@ def _preflight() -> None:
     )
     _try_import("shapely", "the geometry library used for scoring")
     _try_import("numpy", "numerical core")
+    _try_import("numba", "compiled numerical routines")
 
 
 def _setup_logging() -> None:
     """Wire up a console handler for the 'mosaic' logger.
 
     Without this the runner-added NullHandler swallows every log line, so
-    diagnostic checkpoints (e.g. the hot-start flow) leave no trace when
+    diagnostic checkpoints (e.g. the starting-plan flow) leave no trace when
     something goes wrong. ASCII-only formatter to dodge cp1252 crashes
     when the console code page is Windows-1252.
 

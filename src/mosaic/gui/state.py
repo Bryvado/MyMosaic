@@ -122,8 +122,6 @@ class SharedState:
     representation_overall_history: list = field(default_factory=list)
     minority_cohesion_overall_history: list = field(default_factory=list)
     community_congruence_overall_history: list = field(default_factory=list)
-    representation_counts: list = field(default_factory=lambda: [0.0, 0.0, 0.0])
-    representation_ratings: list = field(default_factory=lambda: [-1.0, -1.0, -1.0])
     # Run-constant opportunity targets ({group: {target, feasible, ceiling}}),
     # published once at run start. Display only; never updated per iteration.
     opportunity_targets: dict = field(default_factory=dict)
@@ -139,6 +137,7 @@ class SharedState:
     pop_deviation_history: list = field(default_factory=list)
     pop_dev_max_history: list = field(default_factory=list)
     pop_dev_mean_history: list = field(default_factory=list)
+    alignment_penalty_history: list = field(default_factory=list)
     alignment_mean_ret_history: list = field(default_factory=list)
     alignment_min_ret_history: list = field(default_factory=list)
     cut_edges_history: list = field(default_factory=list)
@@ -149,6 +148,7 @@ class SharedState:
 
     # Score breakdown: metric name → % of total weighted score (updated by runner)
     score_breakdown: dict = field(default_factory=dict)
+    best_score_breakdown: dict = field(default_factory=dict)
 
     # Map state
     gdf_ready: bool = False                 # pulsed True by runner after full load completes
@@ -165,16 +165,19 @@ class SharedState:
     county_bias_enabled: bool = False
     county_bias: float = 5.0
 
-    # Hot start: user-uploaded initial assignment that replaces the
+    # Starting plan: uploaded or captured initial assignment that replaces the
     # recursive-bipartition default. None = use default.
     hot_start_assignment: Optional[np.ndarray] = None
     hot_start_filename: str = ""
+    hot_start_locked_districts: tuple[int, ...] = ()
+    # Locks belonging to the displayed run, independent of the next starting plan.
+    run_locked_districts: tuple[int, ...] = ()
 
     # n=3 ReCom mix probability. 0.0 = pure n=2 (~0 dispatch overhead, mass-generate mode).
     # 0.05 default helps the chain escape local minima at ~5-7% wall-time cost.
     # Set by GUI before run; frozen at run start to keep dispatch zero-overhead at 0.
     n3_probability: float = 0.05
-    tree_mode: str = "reference"  # opt-in compiled retry loop changes seeded trajectories
+    tree_mode: str = "compiled"  # standard or fast tree randomization
     # Per-stage attempt cap for n=3 cuts. Bench showed 20 is the sweet spot.
     n3_max_attempts_per_stage: int = 20
 
@@ -281,13 +284,12 @@ class SharedState:
             self.representation_overall_history = []
             self.minority_cohesion_overall_history = []
             self.community_congruence_overall_history = []
-            self.representation_counts = [0.0, 0.0, 0.0]
-            self.representation_ratings = [-1.0, -1.0, -1.0]
             self.opportunity_targets = {}
             self.race_score_applicable = {}
             self.pop_deviation_history = []
             self.pop_dev_max_history = []
             self.pop_dev_mean_history = []
+            self.alignment_penalty_history = []
             self.alignment_mean_ret_history = []
             self.alignment_min_ret_history = []
             self.cut_edges_history = []
@@ -296,7 +298,9 @@ class SharedState:
             self.hinge_history = []
             self.inversion_history = []
             self.score_breakdown = {}
+            self.best_score_breakdown = {}
             self.initial_assignment = None
+            self.run_locked_districts = ()
             self.district_label_map = None
             # Note: hot_start_assignment is intentionally NOT cleared here -- it
             # persists across run resets so the user can re-run from the same

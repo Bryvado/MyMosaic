@@ -34,6 +34,7 @@ class RunnerMixin:
 
     def _session_workers_busy(self):
         return (getattr(self, "_saving", False)
+                or any(not job[1].done() for job in getattr(self, "_ens_queries", {}).values())
                 or any(t is not None and t.is_alive() for t in self._session_workers()))
 
     def _wait_for_workers(self, action):
@@ -72,7 +73,13 @@ class RunnerMixin:
 
     def _on_revert_to_best(self):
         """Rewind display to the best-scoring iteration seen so far."""
+        if self._queue_session_action(self._on_revert_to_best):
+            return
         if self._ensemble_active:
+            return
+        if self.state.best_assignment is None:
+            return
+        if self._wait_for_workers(self._on_revert_to_best):
             return
         with self.state._lock:
             if self.state.best_assignment is None:
@@ -82,6 +89,7 @@ class RunnerMixin:
             best_iter   = self.state.best_iteration
             best_cuts   = self.state.best_cut_edges
             best_temp   = self.state.best_temperature
+            best_breakdown = dict(self.state.best_score_breakdown)
             n_score     = self.state.best_score_history_len
             n_temp      = self.state.best_temp_history_len
             n_acc       = self.state.best_acc_history_len
@@ -118,6 +126,7 @@ class RunnerMixin:
             self.state.cut_edges_history        = self.state.cut_edges_history[:n_score]
             # Lockstep with score_history; trim here too so the buffers below
             # don't re-grow from the post-best tail on the next frame.
+            self.state.alignment_penalty_history = self.state.alignment_penalty_history[:n_score]
             self.state.alignment_mean_ret_history = self.state.alignment_mean_ret_history[:n_score]
             self.state.alignment_min_ret_history  = self.state.alignment_min_ret_history[:n_score]
             self.state.majority_dem_history     = self.state.majority_dem_history[:n_score]
@@ -149,13 +158,7 @@ class RunnerMixin:
             self.state.community_congruence_overall_history = (
                 self.state.community_congruence_overall_history[:n_score])
 
-        # Tell the worker to stop, then wait for it to exit before we touch
-        # state -- a worker parked in its pause-wait loop can otherwise wake
-        # up and resume normal iteration mid-revert ("paused then unpaused
-        # on revert").
         self.state.request_stop()
-        if self.algorithm_thread is not None and self.algorithm_thread.is_alive():
-            self.algorithm_thread.join(timeout=0.5)
 
         self.state.update(
             status=AlgorithmStatus.IDLE,
@@ -165,6 +168,7 @@ class RunnerMixin:
             current_cut_edges=best_cuts,
             current_iteration=best_iter,
             current_temperature=best_temp,
+            score_breakdown=best_breakdown,
         )
         if max_iter > 0:
             dpg.set_value(self._progress, best_iter / max_iter)
@@ -173,11 +177,12 @@ class RunnerMixin:
         for buf in (
             self._buf_score, self._buf_cs_score, self._buf_cs_excess,
             self._buf_cs_clean, self._buf_mm, self._buf_eg,
+            self._buf_pb, self._buf_pg,
             self._buf_seats, self._buf_pp, self._buf_reock,
             self._buf_hc, self._buf_hsplit, self._buf_hprop, self._buf_hcmp,
             self._buf_popdev,
             self._buf_popdev_max, self._buf_popdev_mean, self._buf_cuts,
-            self._buf_align_mean, self._buf_align_min,
+            self._buf_align_penalty, self._buf_align_mean, self._buf_align_min,
             self._buf_maj_dem, self._buf_maj_rep, self._buf_hinge,
             self._buf_inversion,
             self._buf_rep_black, self._buf_rep_latino, self._buf_rep_asian,
@@ -186,8 +191,8 @@ class RunnerMixin:
             self._buf_cong_black, self._buf_cong_latino, self._buf_cong_asian,
             self._buf_rep_overall, self._buf_coh_overall, self._buf_cong_overall,
         ):
-            buf.trim_to(best_iter, n_score)
-        self._buf_temp.trim_to(best_iter, n_temp)
+            buf.trim_to(n_score - 1, n_score)
+        self._buf_temp.trim_to(n_temp - 1, n_temp)
         self._buf_acc.trim_to(best_iter, n_acc)
 
         if self.map_view is not None and self.map_view._loaded:
@@ -221,30 +226,48 @@ class RunnerMixin:
 
         Return False if its district count or population balance prevents a run.
         """
-        # Relight reseeds each run from the live map, via the same seed slot the
-        # runner already reads for Hot Start (the two are mutually exclusive). No
+        # Fine Tune reseeds each run from the live map, via the same seed slot the
+        # runner already reads for Start from Plan (the two are mutually exclusive). No
         # map yet (e.g. right after Reset) -> clear the slot -> random seed.
-        if self._relight_active:
+        if self._fine_tune_active:
             with self.state._lock:
                 cur = (self.state.current_assignment.copy()
                        if self.state.current_assignment is not None else None)
             self.state.update(hot_start_assignment=cur)
 
         # Seed sanity: validated when the seed was made, but the Districts
-        # slider or the Population Tolerance could have moved since (Relight
+        # slider or the Population Tolerance could have moved since (Fine Tune
         # especially reseeds from a map built under the old settings). Re-check
         # both against the current values.
-        (hot_start,) = self.state.get("hot_start_assignment")
+        hot_start, locked_districts = self.state.get(
+            "hot_start_assignment", "hot_start_locked_districts")
+        if locked_districts:
+            from mosaic.io.hot_start import (
+                DistrictCountMismatch,
+                HotStartError,
+                validate_district_locks,
+            )
+            try:
+                validate_district_locks(
+                    hot_start, locked_districts, self.runner.populations, self.runner.graph,
+                    dpg.get_value(self._num_districts), dpg.get_value(self._tolerance) / 100.0)
+            except DistrictCountMismatch as exc:
+                self._show_hot_start_error(str(exc), district_count=exc.district_count)
+                return False
+            except HotStartError as exc:
+                self._show_hot_start_error(str(exc))
+                return False
         if hot_start is not None:
-            what = "Relight map" if self._relight_active else "Hot start"
-            fix  = ("Clear Relight" if self._relight_active
-                    else "Clear the hot start")
+            what = "Fine Tune map" if self._fine_tune_active else "Starting plan"
+            fix  = ("Stop Fine-Tuning" if self._fine_tune_active
+                    else "Clear the starting plan")
             n_dist_slider = dpg.get_value(self._num_districts)
             n_dist_seed = int(hot_start.max()) + 1
             if n_dist_seed != n_dist_slider:
                 self._show_hot_start_error(
                     f"{what} has {n_dist_seed} districts; {n_dist_slider} are selected. "
-                    f"{fix} or change the district count."
+                    f"{fix} or change the district count.",
+                    district_count=n_dist_seed if not self._fine_tune_active else None,
                 )
                 return False
             pops = self.runner.populations
@@ -299,7 +322,7 @@ class RunnerMixin:
                       if dpg.get_value(self._community_congruence_enabled) else 0.0)
         w_pd   = (dpg.get_value(self._w_pop_deviation)
                   if dpg.get_value(self._popdev_enabled) else 0.0)
-        # Alignment only counts when enabled AND a reference plan is loaded.
+        # Plan Continuity only counts when enabled AND a reference plan is loaded.
         _align_on = (dpg.get_value(self._alignment_enabled)
                      and self.runner is not None
                      and self.runner.alignment_data is not None)
@@ -394,7 +417,7 @@ class RunnerMixin:
             }[dpg.get_value(self._tolerance_ratchet_mode)],
             max_iterations=dpg.get_value(self._iterations),
             seed=seed,
-            tree_mode="fast" if dpg.get_value(self._fast_trees) else "reference",
+            tree_mode="fast" if dpg.get_value(self._fast_trees) else "compiled",
             score_config=score_cfg,
             annealing_config=ann_cfg,
             map_render_interval=dpg.get_value(self._map_interval),
@@ -417,9 +440,19 @@ class RunnerMixin:
     def _on_reset(self):
         if self._queue_session_action(self._on_reset):
             return
+        if self._ensemble_active or self._wait_for_workers(self._on_reset):
+            return
+        if getattr(self, "_ens_writer", None) is not None:
+            if not self._on_ensemble_reset():
+                return
+        self._reset_run_state()
+
+    def _reset_run_state(self):
+        if self._queue_session_action(self._reset_run_state):
+            return
         if self._ensemble_active:
             return
-        if self._wait_for_workers(self._on_reset):
+        if self._wait_for_workers(self._reset_run_state):
             return
         self.state.request_stop()
         with self.state._lock:
@@ -452,8 +485,12 @@ class RunnerMixin:
             self.state.congruence_black_history = []
             self.state.congruence_latino_history = []
             self.state.congruence_asian_history = []
-            self.state.representation_counts = [0.0, 0.0, 0.0]
-            self.state.representation_ratings = [-1.0, -1.0, -1.0]
+            self.state.representation_overall_history = []
+            self.state.minority_cohesion_overall_history = []
+            self.state.community_congruence_overall_history = []
+            self.state.alignment_penalty_history = []
+            self.state.alignment_mean_ret_history = []
+            self.state.alignment_min_ret_history = []
             self.state.opportunity_targets = {}
             self.state.race_score_applicable = {}
             self.state.inversion_history = []
@@ -478,12 +515,14 @@ class RunnerMixin:
             rejected_worse=0,
             best_assignment=None,
             current_assignment=None,
+            run_locked_districts=(),
             district_label_map=None,
             score_breakdown={},
+            best_score_breakdown={},
         )
-        # Reset wipes the current map, so a Relight armed against it no longer
-        # applies -- turn it off (restoring the pre-Relight annealing settings).
-        self._clear_relight()
+        # Reset wipes the current map, so a Fine Tune armed against it no longer
+        # applies -- turn it off (restoring the pre-Fine Tune annealing settings).
+        self._clear_fine_tune()
         # Reset status bar and score readouts
         dpg.set_value(self._status_txt, "Status: Idle")
         dpg.set_value(self._iter_txt,   "Iteration: 0 / 0")
@@ -612,6 +651,9 @@ class RunnerMixin:
             x, y = self._renumber_centroids_xy()
             pops = np.asarray(self.runner.populations, dtype=np.float64)
             label_map = geographic_label_map(stable, x, y, pops, n_dist, rule=rule)
+        from mosaic.renumber import preserve_locked_labels
+        label_map = preserve_locked_labels(
+            label_map, self.state.run_locked_districts, preserve_matches=rule == "infer")
         self._renumber_render(label_map)
 
     def _infer_label_map(self, stable: np.ndarray, n_dist: int):
@@ -650,7 +692,7 @@ class RunnerMixin:
         "nw_se":      "Northwest to Southeast",
         "n_s":        "North to South",
         "proximity":  "By proximity",
-        "infer":      "Infer from alignment",
+        "infer":      "Infer from reference plan",
     }
     _RENUMBER_LABEL_TO_RULE = {v: k for k, v in _RENUMBER_RULE_TO_LABEL.items()}
 
@@ -661,7 +703,7 @@ class RunnerMixin:
     def _renumber_radio_items(self) -> list:
         items = ["By proximity", "Northwest to Southeast", "North to South", "None"]
         if self._alignment_loaded():
-            items.append("Infer from alignment")
+            items.append("Infer from reference plan")
         return items
 
     def _renumber_rule_label(self) -> str:
@@ -698,7 +740,7 @@ class RunnerMixin:
     def _on_open_renumber_options(self) -> None:
         if self._ensemble_active:
             return
-        # "Infer from alignment" only appears when a reference plan is loaded;
+        # "Infer from reference plan" only appears when a reference plan is loaded;
         # if it was selected and the plan is gone, fall back to the diagonal.
         if self._renumber_rule == "infer" and not self._alignment_loaded():
             self._renumber_rule = "proximity"

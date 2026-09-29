@@ -6,15 +6,11 @@ import igraph as ig
 import numpy as np
 
 from mosaic.recom.tree import (
-    _NUMBA_OK,
     FbcScratch,
+    _nb_cut_edges,
     find_balanced_cut_fast,
-    find_balanced_cut_ig,
     try_residual_balanced_cut,
 )
-
-if _NUMBA_OK:
-    from mosaic.recom.tree import _nb_cut_edges
 
 
 class GraphContext:
@@ -57,13 +53,9 @@ class GraphContext:
         Includes virtual edges: move proposals select from this pool so an
         island can be merged and reassigned. The cut-edge *score* masks them
         out separately (see real_edge_mask / score_plan)."""
-        if _NUMBA_OK:
-            out = np.empty(self.n_edges, dtype=np.int32)
-            cnt = _nb_cut_edges(self.edge_u, self.edge_v, assignment, out)
-            return out[:cnt]
-        return np.where(
-            assignment[self.edge_u] != assignment[self.edge_v]
-        )[0].astype(np.int32)
+        out = np.empty(self.n_edges, dtype=np.int32)
+        cnt = _nb_cut_edges(self.edge_u, self.edge_v, assignment, out)
+        return out[:cnt]
 
 
 def recom_step_ig(
@@ -112,19 +104,12 @@ def recom_step_ig(
 
     # Both districts are connected (invariant maintained by construction) and the
     # selected cut edge bridges them, so the merged region is always connected.
-    if _NUMBA_OK:
-        subset = find_balanced_cut_fast(
-            ctx.edge_u, ctx.edge_v, ctx.scratch, merged_nodes,
-            populations, ideal_pop, tolerance, max_attempts=100,
-            county_array=county_array, county_bias=county_bias,
-            _nodes_sorted=True,
-        )
-    else:
-        subgraph = ctx.graph.subgraph(merged_nodes)
-        subset = find_balanced_cut_ig(
-            subgraph, populations, ideal_pop, tolerance, max_attempts=100,
-            county_array=county_array, county_bias=county_bias,
-        )
+    subset = find_balanced_cut_fast(
+        ctx.edge_u, ctx.edge_v, ctx.scratch, merged_nodes,
+        populations, ideal_pop, tolerance, max_attempts=100,
+        county_array=county_array, county_bias=county_bias,
+        _nodes_sorted=True,
+    )
 
     if subset is None:
         return assignment, False, cut_edge_indices
@@ -237,25 +222,15 @@ def recom_step_ig_n3(
     # Merged region is connected: A∪B via the picked cut edge, C joined via the
     # cut edge selected by _pick_third_district.
     stage1_state: dict = {}
-    if _NUMBA_OK:
-        subset_a_new = find_balanced_cut_fast(
-            ctx.edge_u, ctx.edge_v, ctx.scratch, merged_nodes,
-            populations, ideal_pop, tolerance,
-            max_attempts=max_attempts_per_stage,
-            one_sided=True,
-            county_array=county_array, county_bias=county_bias,
-            out_state=stage1_state,
-            _nodes_sorted=True,
-        )
-    else:
-        subgraph_3 = ctx.graph.subgraph(merged_nodes)
-        subset_a_new = find_balanced_cut_ig(
-            subgraph_3, populations, ideal_pop, tolerance,
-            max_attempts=max_attempts_per_stage,
-            one_sided=True,
-            county_array=county_array, county_bias=county_bias,
-            out_state=stage1_state,
-        )
+    subset_a_new = find_balanced_cut_fast(
+        ctx.edge_u, ctx.edge_v, ctx.scratch, merged_nodes,
+        populations, ideal_pop, tolerance,
+        max_attempts=max_attempts_per_stage,
+        one_sided=True,
+        county_array=county_array, county_bias=county_bias,
+        out_state=stage1_state,
+        _nodes_sorted=True,
+    )
     if subset_a_new is None:
         return assignment, False, cut_edge_indices
 
@@ -277,23 +252,14 @@ def recom_step_ig_n3(
         keep = np.ones(stage1_state["n"], dtype=np.bool_)
         keep[stage1_state["carved_sub_idx"]] = False
         remaining_nodes = stage1_state["node_ids"][keep].astype(np.int32, copy=False)
-        if _NUMBA_OK:
-            subset_b_new = find_balanced_cut_fast(
-                ctx.edge_u, ctx.edge_v, ctx.scratch, remaining_nodes,
-                populations, ideal_pop, tolerance,
-                max_attempts=max_attempts_per_stage,
-                one_sided=False,
-                county_array=county_array, county_bias=county_bias,
-                _nodes_sorted=True,
-            )
-        else:
-            subgraph_2 = ctx.graph.subgraph(remaining_nodes)
-            subset_b_new = find_balanced_cut_ig(
-                subgraph_2, populations, ideal_pop, tolerance,
-                max_attempts=max_attempts_per_stage,
-                one_sided=False,
-                county_array=county_array, county_bias=county_bias,
-            )
+        subset_b_new = find_balanced_cut_fast(
+            ctx.edge_u, ctx.edge_v, ctx.scratch, remaining_nodes,
+            populations, ideal_pop, tolerance,
+            max_attempts=max_attempts_per_stage,
+            one_sided=False,
+            county_array=county_array, county_bias=county_bias,
+            _nodes_sorted=True,
+        )
         if subset_b_new is None:
             return assignment, False, cut_edge_indices
 

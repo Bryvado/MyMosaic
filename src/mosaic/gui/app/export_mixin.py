@@ -1,4 +1,6 @@
 """CSV/metric export and map image save (PNG/PDF workers)."""
+from mosaic.gui.map_view import county_split_masks
+
 from ._common import (
     _ASSETS_DIR,
     _MAP_DW,
@@ -19,6 +21,7 @@ _EXPORT_BG = (255, 255, 255, 255)
 _EXPORT_FG = (28, 30, 34, 255)
 # Splits view dims un-split counties; on the white page they recede to light grey.
 _EXPORT_SPLITS_DIM = (230, 232, 236, 255)
+_EXPORT_SPLITS_LIGHT = (244, 245, 247, 255)
 
 
 class ExportMixin:
@@ -213,11 +216,12 @@ class ExportMixin:
         offscreen = MapView(texture_tag="__offscreen", draw_w=w, draw_h=h)
         offscreen._bg_color = np.array(_EXPORT_BG, dtype=np.uint8)
         offscreen._splits_dim = np.array(_EXPORT_SPLITS_DIM, dtype=np.uint8)
+        offscreen._splits_light = np.array(_EXPORT_SPLITS_LIGHT, dtype=np.uint8)
         for flag in ("county_overlay", "partisan_overlay",
                      "district_partisan_overlay", "splits_view",
                      "compactness_view", "pop_dev_view", "demographic_overlay",
                      "precinct_demographic_overlay",
-                     "show_labels", "precinct_overlay"):
+                     "show_labels", "precinct_overlay", "show_district_lines"):
             setattr(offscreen, flag, getattr(src, flag))
         offscreen.fast_labels = False  # precise label placement for export
         offscreen.state_outline = state_outline
@@ -598,22 +602,23 @@ class ExportMixin:
             if mv.splits_view and mv._county_array is not None:
                 ca  = mv._county_array
                 nct = int(ca.max()) + 1
-                flt = (ca * n_dist + assignment).astype(np.int64)
-                co_di = (np.bincount(flt, minlength=nct * n_dist)
-                           .reshape(nct, n_dist))
-                county_clean = (co_di > 0).sum(axis=1) <= 1
+                county_clean, county_contained = county_split_masks(assignment, ca, n_dist)
                 dim_c = (_EXPORT_SPLITS_DIM[0] / 255, _EXPORT_SPLITS_DIM[1] / 255,
                          _EXPORT_SPLITS_DIM[2] / 255)
                 dim_patches = []
+                dim_colors = []
                 for ci_idx in range(nct):
-                    if county_clean[ci_idx] and ci_idx in cty_geoms.index:
+                    if ((county_clean[ci_idx] or county_contained[ci_idx])
+                            and ci_idx in cty_geoms.index):
                         p = cty_paths[ci_idx]
                         if p:
                             dim_patches.append(PathPatch(p))
+                            dim_colors.append(tuple(c / 255 for c in _EXPORT_SPLITS_LIGHT[:3])
+                                              if county_contained[ci_idx] else dim_c)
                 if dim_patches:
                     ax.add_collection(
                         PatchCollection(dim_patches,
-                                        facecolors=[dim_c] * len(dim_patches),
+                                        facecolors=dim_colors,
                                         edgecolors="none", linewidths=0),
                         autolim=False)
 
@@ -630,7 +635,7 @@ class ExportMixin:
 
             # ── District borders (dissolved geoms, no per-precinct loop) ──────
             for p in dist_paths.values():
-                if p:
+                if p and mv.show_district_lines:
                     ax.add_artist(PathPatch(p, facecolor="none",
                                            edgecolor="black", linewidth=0.7))
 

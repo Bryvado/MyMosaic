@@ -1,4 +1,6 @@
 """Score/metric side-panel builders and reference-line themes."""
+from mosaic.gui.choice_radio import RADIO_HELP, choice_radio
+
 from ._common import _CONTRIB_BAR_METRICS, _LEFT_W, dpg
 
 
@@ -10,7 +12,7 @@ class PanelsMixin:
             label="Temperature",
             tag="panel_temperature",
             show=False,
-            width=520, height=280,
+            width=252, height=336,
             pos=[_LEFT_W + 60, 80],
             on_close=self._on_temp_panel_close,
         ):
@@ -27,45 +29,31 @@ class PanelsMixin:
     def _build_county_splits_panel(self):
         with dpg.window(
             label="Classic Splitting", tag="panel_county_splits",
-            show=False, width=540, height=460,
-            pos=[_LEFT_W + 80, 80],
+            show=False, width=252, height=336, pos=[_LEFT_W + 80, 80],
             on_close=lambda: dpg.set_value(self._panel_cs_item, False),
         ):
             with dpg.group(tag="cs_charts_grp"):
-                # Two panels, one per real county score -- there is no single
-                # combined "county splits score", so it isn't charted.
-                self.theme.text("Excess Splits", "heading")
-                with dpg.plot(height=165, width=-1, no_menus=True):
+                with dpg.plot(height=-1, width=-1, no_menus=True):
                     dpg.add_plot_legend()
                     dpg.add_plot_axis(dpg.mvXAxis, label="Iteration", tag="cs_excess_x")
                     with dpg.plot_axis(dpg.mvYAxis, label="Count", tag="cs_excess_y"):
-                        dpg.add_line_series([], [], label="Excess", tag="cs_excess_series")
-                dpg.add_spacer(height=6)
-                self.theme.text("Single-County Districts", "heading")
-                with dpg.plot(height=165, width=-1, no_menus=True):
-                    dpg.add_plot_legend()
-                    dpg.add_plot_axis(dpg.mvXAxis, label="Iteration", tag="cs_clean_x")
-                    with dpg.plot_axis(dpg.mvYAxis, label="Count", tag="cs_clean_y"):
-                        dpg.add_line_series([], [], label="Single-County", tag="cs_clean_series")
-                        _cs_max = dpg.add_line_series(
-                            [], [], label="##cs_max", tag="cs_clean_max",
-                        )
-                        dpg.bind_item_theme(_cs_max, self._partisan_ref_theme)
-                self.theme.track(
-                    dpg.add_text("", tag="cs_max_clean_note"),
-                    "success_soft",
-                )
-            self._tooltip(
-                "cs_charts_grp",
-                "Fewer Excess Splits is better; more Single-County Districts is better.",
-            )
-            self.theme.track(
-                dpg.add_text(
-                    "Turn on this score to chart it.",
-                    tag="cs_inactive_lbl", show=False,
-                ),
-                "muted",
-            )
+                        dpg.add_line_series([], [], label="Excess splits", tag="cs_excess_series")
+                        dpg.add_line_series([], [], label="1-county", tag="cs_clean_series")
+                        dpg.add_line_series([], [], label="1cd ceiling", tag="cs_clean_max",
+                                            segments=True)
+            self._style_county_lines("cs_clean_series", "cs_clean_max", "cs_excess_series")
+            self.theme.track(dpg.add_text("Turn on this score to chart it.",
+                                          tag="cs_inactive_lbl", show=False), "muted")
+
+    def _style_county_lines(self, count_series, ceiling_series, excess_series):
+        for series, color in ((excess_series, (230, 145, 55, 255)),
+                              (count_series, (70, 165, 95, 255)),
+                              (ceiling_series, (150, 190, 160, 255))):
+            with dpg.theme() as line_theme:
+                with dpg.theme_component(dpg.mvLineSeries):
+                    dpg.add_theme_color(dpg.mvPlotCol_Line, color,
+                                        category=dpg.mvThemeCat_Plots)
+            dpg.bind_item_theme(series, line_theme)
 
     def _build_ref_line_themes(self):
         """Build the palette-aware reference-line themes used across panels
@@ -105,7 +93,7 @@ class PanelsMixin:
 
         with dpg.window(
             label="Partisanship", tag="panel_partisanship",
-            show=False, width=540, height=320,
+            show=False, width=252, height=336,
             pos=[_LEFT_W + 80, 80],
             on_close=lambda: dpg.set_value(self._panel_partisan_item, False),
         ):
@@ -136,7 +124,7 @@ class PanelsMixin:
     def _build_win_chance_panel(self):
         with dpg.window(
             label="Win Chance", tag="panel_win_chance",
-            show=False, width=540, height=320,
+            show=False, width=252, height=336,
             pos=[_LEFT_W + 120, 110],
             on_close=lambda: dpg.set_value(self._panel_win_chance_item, False),
         ):
@@ -165,7 +153,7 @@ class PanelsMixin:
     def _build_mm_panel(self):
         with dpg.window(
             label="Mean-Median Difference", tag="panel_mm",
-            show=False, width=500, height=280,
+            show=False, width=252, height=336,
             pos=[_LEFT_W + 80, 80],
             on_close=lambda: dpg.set_value(self._panel_mm_item, False),
         ):
@@ -186,7 +174,7 @@ class PanelsMixin:
     def _build_eg_panel(self):
         with dpg.window(
             label="Efficiency Gap", tag="panel_eg",
-            show=False, width=500, height=280,
+            show=False, width=252, height=336,
             pos=[_LEFT_W + 80, 80],
             on_close=lambda: dpg.set_value(self._panel_eg_item, False),
         ):
@@ -207,7 +195,7 @@ class PanelsMixin:
     def _build_dem_seats_panel(self):
         with dpg.window(
             label="Expected Dem Seats", tag="panel_dem_seats",
-            show=False, width=500, height=280,
+            show=False, width=252, height=336,
             pos=[_LEFT_W + 80, 80],
             on_close=lambda: dpg.set_value(self._panel_seats_item, False),
         ):
@@ -228,7 +216,7 @@ class PanelsMixin:
     def _build_pp_panel(self):
         with dpg.window(
             label="Polsby-Popper", tag="panel_pp",
-            show=False, width=500, height=280,
+            show=False, width=252, height=336,
             pos=[_LEFT_W + 80, 80],
             on_close=lambda: dpg.set_value(self._panel_pp_item, False),
         ):
@@ -256,7 +244,7 @@ class PanelsMixin:
     def _build_reock_panel(self):
         with dpg.window(
             label="Reock", tag="panel_reock",
-            show=False, width=500, height=280,
+            show=False, width=252, height=336,
             pos=[_LEFT_W + 80, 80],
             on_close=lambda: dpg.set_value(self._panel_reock_item, False),
         ):
@@ -282,18 +270,13 @@ class PanelsMixin:
     def _build_representation_panel(self):
         with dpg.window(
             label="Electoral Opportunity", tag="panel_representation",
-            show=False, width=500, height=280,
+            show=False, width=336, height=336,
             pos=[_LEFT_W + 80, 80],
             on_close=lambda: dpg.set_value(self._panel_representation_item, False),
         ):
-            self._rep_chart_mode = dpg.add_radio_button(
+            self._rep_chart_mode = choice_radio(help_key="opportunity",
                 items=["Overall", "Rating", "Opportunity count"], default_value="Overall",
                 horizontal=True,
-            )
-            self._tooltip(
-                self._rep_chart_mode,
-                "Overall: lower penalty is better. Rating: higher group rating is "
-                "better. Opportunity count: modeled full and partial district credit.",
             )
             with dpg.group(tag="representation_plot_grp"):
                 with dpg.plot(height=-1, width=-1, no_menus=True):
@@ -310,6 +293,11 @@ class PanelsMixin:
                                             tag="representation_latino_series")
                         dpg.add_line_series([], [], label="Asian",
                                             tag="representation_asian_series")
+                        for group, name in (("black", "Black"), ("latino", "Latino"),
+                                            ("asian", "Asian")):
+                            dpg.add_line_series([], [], label=f"{name} target",
+                                                tag=f"representation_{group}_target_series",
+                                                segments=True, show=False)
             # Match the line colors to the demographic ("D") map overlay so the
             # chart and map agree: Black=blue, Latino=green, Asian=purple.
             from mosaic.gui.map_view import _DEMOGRAPHIC_RGB
@@ -322,11 +310,15 @@ class PanelsMixin:
                         dpg.add_theme_color(dpg.mvPlotCol_Line, (r, g, b, 255),
                                             category=dpg.mvThemeCat_Plots)
                 dpg.bind_item_theme(series, _line_theme)
-            self._tooltip(
-                "representation_plot_grp",
-                "Group ratings and opportunity counts are higher-is-better. "
-                "Overall penalty is lower-is-better.",
-            )
+                muted = tuple(round(0.45 * c + 0.55 * 200) for c in (r, g, b))
+                with dpg.theme() as target_theme:
+                    with dpg.theme_component(dpg.mvLineSeries):
+                        dpg.add_theme_color(dpg.mvPlotCol_Line, (*muted, 255),
+                                            category=dpg.mvThemeCat_Plots)
+                dpg.bind_item_theme(f"representation_{grp}_target_series", target_theme)
+            with dpg.tooltip(parent="representation_plot_grp", delay=0.4):
+                dpg.add_text(RADIO_HELP["opportunity"]["Overall"],
+                             tag="representation_chart_help", wrap=320)
             self.theme.track(
                 dpg.add_text(
                     "Turn on this score to chart it.",
@@ -334,25 +326,18 @@ class PanelsMixin:
                 ),
                 "muted",
             )
-        # Pad past 0-100 so a rating pinned to the proportional 100 (or to 0)
-        # sits inside the frame instead of clipped on the border.
-        dpg.set_axis_limits("representation_y", -4.0, 104.0)
+        dpg.set_axis_limits("representation_y", 0.0, 100.0)
 
     def _build_minority_cohesion_panel(self):
         with dpg.window(
             label="Neighborhood Severance", tag="panel_minority_cohesion",
-            show=False, width=500, height=280,
+            show=False, width=252, height=336,
             pos=[_LEFT_W + 100, 100],
             on_close=lambda: dpg.set_value(self._panel_minority_cohesion_item, False),
         ):
-            self._cohesion_chart_mode = dpg.add_radio_button(
+            self._cohesion_chart_mode = choice_radio(help_key="severance",
                 items=["Overall", "By group"], default_value="Overall",
                 horizontal=True,
-            )
-            self._tooltip(
-                self._cohesion_chart_mode,
-                "Overall: lower penalty is better. By group: higher intact share "
-                "is better.",
             )
             with dpg.group(tag="minority_cohesion_plot_grp"):
                 with dpg.plot(height=-1, width=-1, no_menus=True):
@@ -381,11 +366,9 @@ class PanelsMixin:
                         dpg.add_theme_color(dpg.mvPlotCol_Line, (r, g, b, 255),
                                             category=dpg.mvThemeCat_Plots)
                 dpg.bind_item_theme(series, _line_theme)
-            self._tooltip(
-                "minority_cohesion_plot_grp",
-                "Share of each selected group's weighted neighborhood kept together. "
-                "Higher is better.",
-            )
+            with dpg.tooltip(parent="minority_cohesion_plot_grp", delay=0.4):
+                dpg.add_text(RADIO_HELP["severance"]["Overall"],
+                             tag="minority_cohesion_chart_help", wrap=320)
             self.theme.track(
                 dpg.add_text(
                     "Turn on this score to chart it.",
@@ -398,19 +381,14 @@ class PanelsMixin:
     def _build_community_congruence_panel(self):
         with dpg.window(
             label="Community Dispersion", tag="panel_community_congruence",
-            show=False, width=500, height=280,
+            show=False, width=252, height=336,
             pos=[_LEFT_W + 120, 120],
             on_close=lambda: dpg.set_value(
                 self._panel_community_congruence_item, False),
         ):
-            self._congruence_chart_mode = dpg.add_radio_button(
+            self._congruence_chart_mode = choice_radio(help_key="dispersion",
                 items=["Overall", "By group"], default_value="Overall",
                 horizontal=True,
-            )
-            self._tooltip(
-                self._congruence_chart_mode,
-                "Overall: lower penalty is better. By group: higher community "
-                "congruence is better.",
             )
             with dpg.group(tag="community_congruence_plot_grp"):
                 with dpg.plot(height=-1, width=-1, no_menus=True):
@@ -439,11 +417,9 @@ class PanelsMixin:
                         dpg.add_theme_color(dpg.mvPlotCol_Line, (r, g, b, 255),
                                             category=dpg.mvThemeCat_Plots)
                 dpg.bind_item_theme(series, _line_theme)
-            self._tooltip(
-                "community_congruence_plot_grp",
-                "Rates how little each selected group is spread across districts, "
-                "after a population-based allowance. Higher is better.",
-            )
+            with dpg.tooltip(parent="community_congruence_plot_grp", delay=0.4):
+                dpg.add_text(RADIO_HELP["dispersion"]["Overall"],
+                             tag="community_congruence_chart_help", wrap=320)
             self.theme.track(
                 dpg.add_text(
                     "Turn on this score to chart it.",
@@ -451,12 +427,12 @@ class PanelsMixin:
                 ),
                 "muted",
             )
-        dpg.set_axis_limits("community_congruence_y", -4.0, 104.0)
+        dpg.set_axis_limits("community_congruence_y", 0.0, 100.0)
 
     def _build_hc_panel(self):
         with dpg.window(
             label="Compactness", tag="panel_hc",
-            show=False, width=500, height=280,
+            show=False, width=252, height=336,
             pos=[_LEFT_W + 80, 80],
             on_close=lambda: dpg.set_value(self._panel_hc_item, False),
         ):
@@ -482,10 +458,13 @@ class PanelsMixin:
     def _build_hsplit_panel(self):
         with dpg.window(
             label="County Congruence", tag="panel_hsplit",
-            show=False, width=500, height=280,
+            show=False, width=252, height=336,
             pos=[_LEFT_W + 80, 80],
             on_close=lambda: dpg.set_value(self._panel_hsplit_item, False),
         ):
+            self._hsplit_chart_mode = dpg.add_radio_button(
+                items=["Penalty", "Counts"], default_value="Penalty", horizontal=True,
+            )
             with dpg.group(tag="hsplit_plot_grp"):
                 with dpg.plot(height=-1, width=-1, no_menus=True):
                     dpg.add_plot_legend()
@@ -494,11 +473,15 @@ class PanelsMixin:
                             dpg.mvYAxis,
                             label="County Congruence (penalty, 0 = best)",
                             tag="hsplit_y"):
-                        dpg.add_line_series([], [], label="Cty Cong", tag="hsplit_series")
-            self._tooltip(
-                "hsplit_plot_grp",
-                "County-splitting penalty. Lower is better; Unclipped mode may exceed 100.",
-            )
+                        dpg.add_line_series([], [], label="Penalty", tag="hsplit_series")
+                        dpg.add_line_series([], [], label="Excess splits",
+                                            tag="hsplit_excess_series", show=False)
+                        dpg.add_line_series([], [], label="1-county",
+                                            tag="hsplit_scd_series", show=False)
+                        dpg.add_line_series([], [], label="1cd ceiling",
+                                            tag="hsplit_target_series", segments=True, show=False)
+            self._style_county_lines("hsplit_scd_series", "hsplit_target_series",
+                                    "hsplit_excess_series")
             self.theme.track(
                 dpg.add_text(
                     "Turn on this score to chart it.",
@@ -506,14 +489,11 @@ class PanelsMixin:
                 ),
                 "muted",
             )
-        # Penalty is >= 0 and unbounded above: pin the floor at 0, auto-fit the top
-        # each frame in the render block.
-        dpg.set_axis_limits("hsplit_y", 0.0, 100.0)
 
     def _build_hprop_panel(self):
         with dpg.window(
             label="Proportionality", tag="panel_hprop",
-            show=False, width=500, height=280,
+            show=False, width=252, height=336,
             pos=[_LEFT_W + 80, 80],
             on_close=lambda: dpg.set_value(self._panel_hprop_item, False),
         ):
@@ -545,7 +525,7 @@ class PanelsMixin:
     def _build_hcmp_panel(self):
         with dpg.window(
             label="Competitiveness", tag="panel_hcmp",
-            show=False, width=500, height=280,
+            show=False, width=252, height=336,
             pos=[_LEFT_W + 80, 80],
             on_close=lambda: dpg.set_value(self._panel_hcmp_item, False),
         ):
@@ -573,7 +553,7 @@ class PanelsMixin:
     def _build_pb_panel(self):
         with dpg.window(
             label="Partisan Bias", tag="panel_pb",
-            show=False, width=500, height=280,
+            show=False, width=252, height=336,
             pos=[_LEFT_W + 80, 80],
             on_close=lambda: dpg.set_value(self._panel_pb_item, False),
         ):
@@ -594,7 +574,7 @@ class PanelsMixin:
     def _build_pg_panel(self):
         with dpg.window(
             label="Partisan Gini", tag="panel_pg",
-            show=False, width=500, height=280,
+            show=False, width=252, height=336,
             pos=[_LEFT_W + 80, 80],
             on_close=lambda: dpg.set_value(self._panel_pg_item, False),
         ):
@@ -616,7 +596,7 @@ class PanelsMixin:
     def _build_popdev_panel(self):
         with dpg.window(
             label="Population Deviation", tag="panel_popdev",
-            show=False, width=500, height=280,
+            show=False, width=252, height=336,
             pos=[_LEFT_W + 100, 100],
             on_close=lambda: dpg.set_value(self._panel_popdev_item, False),
         ):
@@ -646,41 +626,43 @@ class PanelsMixin:
 
     def _build_alignment_panel(self):
         with dpg.window(
-            label="Alignment", tag="panel_alignment",
-            show=False, width=500, height=280,
-            pos=[_LEFT_W + 100, 100],
+            label="Plan Continuity", tag="panel_alignment",
+            show=False, width=252, height=336, pos=[_LEFT_W + 100, 100],
             on_close=lambda: dpg.set_value(self._panel_alignment_item, False),
         ):
-            with dpg.group(tag="alignment_plot_grp"):
-                with dpg.plot(height=-1, width=-1, no_menus=True):
-                    dpg.add_plot_legend()
-                    dpg.add_plot_axis(dpg.mvXAxis, label="Iteration",
-                                      tag="alignment_x")
-                    with dpg.plot_axis(dpg.mvYAxis,
-                                       label="Cohesion % (100 = intact)",
-                                       tag="alignment_y"):
-                        dpg.add_line_series([], [], label="Mean",
-                                            tag="alignment_mean_series")
-                        dpg.add_line_series([], [], label="Worst district",
-                                            tag="alignment_min_series")
-            self._tooltip(
-                "alignment_plot_grp",
-                "Share of each reference district that stays intact. "
-                "Higher is closer to the reference plan.",
+            self._alignment_chart_mode = dpg.add_radio_button(
+                items=["Penalty", "Districts"], default_value="Penalty", horizontal=True,
             )
-            self.theme.track(
-                dpg.add_text(
-                    "Load a reference plan and turn on Alignment to chart it.",
-                    tag="alignment_inactive_lbl", show=False,
-                ),
-                "muted",
-            )
+            for values in (False, True):
+                group = "alignment_values_plot_grp" if values else "alignment_plot_grp"
+                with dpg.group(tag=group, show=not values):
+                    with dpg.plot(height=-1, width=-1, no_menus=True):
+                        dpg.add_plot_legend()
+                        dpg.add_plot_axis(dpg.mvXAxis, label="Iteration",
+                                          tag="alignment_values_x" if values else "alignment_x")
+                        with dpg.plot_axis(
+                            dpg.mvYAxis,
+                            label="Actual continuity %" if values else "Penalty (0 = best)",
+                            tag="alignment_value_y" if values else "alignment_y",
+                        ):
+                            if values:
+                                dpg.add_line_series([], [], label="Avg district",
+                                                    tag="alignment_mean_series")
+                                dpg.add_line_series([], [], label="Worst district",
+                                                    tag="alignment_min_series")
+                            else:
+                                dpg.add_line_series([], [], label="Penalty",
+                                                    tag="alignment_penalty_series")
+            self.theme.track(dpg.add_text(
+                "Load a reference plan and turn on Plan Continuity to chart it.",
+                tag="alignment_inactive_lbl", show=False), "muted")
         dpg.set_axis_limits("alignment_y", 0.0, 100.0)
+        dpg.set_axis_limits("alignment_value_y", 0.0, 100.0)
 
     def _build_cut_edges_panel(self):
         with dpg.window(
             label="Cut Edges", tag="panel_cut_edges",
-            show=False, width=500, height=280,
+            show=False, width=252, height=336,
             pos=[_LEFT_W + 80, 80],
             on_close=lambda: dpg.set_value(self._panel_cuts_item, False),
         ):
@@ -693,7 +675,7 @@ class PanelsMixin:
     def _build_majority_panel(self):
         with dpg.window(
             label="Chance of Majority", tag="panel_majority",
-            show=False, width=500, height=280,
+            show=False, width=252, height=336,
             pos=[_LEFT_W + 80, 80],
             on_close=lambda: dpg.set_value(self._panel_majority_item, False),
         ):
@@ -716,7 +698,7 @@ class PanelsMixin:
     def _build_hinge_panel(self):
         with dpg.window(
             label="Supermajority/Hinge", tag="panel_hinge",
-            show=False, width=500, height=280,
+            show=False, width=252, height=336,
             pos=[_LEFT_W + 80, 80],
             on_close=lambda: dpg.set_value(self._panel_hinge_item, False),
         ):
@@ -821,10 +803,10 @@ class PanelsMixin:
         # Width is pinned (min_size[0] == max_size[0]): the category axis is sized
         # for the metric names, and a fixed width keeps the intro text's wrap in
         # step with it. Height stays draggable, since the bar count varies.
-        w = 332
+        w = 252
         with dpg.window(
             label="Score Contributors", tag="panel_score_contrib",
-            show=False, width=w, height=340,
+            show=False, width=w, height=336,
             min_size=[w, 200], max_size=[w, 10_000],
             pos=[_LEFT_W + 80, 80],
             on_close=lambda: dpg.set_value(self._panel_contrib_item, False),

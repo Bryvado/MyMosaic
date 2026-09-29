@@ -89,11 +89,11 @@ def default_preset() -> dict[str, dict[str, Any]]:
             for sec, keys in SCHEMA.items()}
 
 
-# Portable presets use the same ranges and integer weights as the GUI.
+# Slider drag ranges are not upper limits for custom weights or multipliers.
 NUMERIC_BOUNDS = {
-    **{(s, k): (0, 100) for s, keys in SCHEMA.items() for k in keys
+    **{(s, k): (0, math.inf) for s, keys in SCHEMA.items() for k in keys
        if k.startswith("weight")},
-    ("county_bias", "multiplier"): (1, 20),
+    ("county_bias", "multiplier"): (1, math.inf),
     ("pop_deviation", "safe_harbor"): (0.0, 0.05),
     ("alignment", "win_threshold"): (0.50, 0.70),
     ("mean_median", "bound"): (0.05, 0.30),
@@ -177,6 +177,8 @@ def parse_preset(data: dict[str, Any]) -> tuple[dict[str, dict[str, Any]], list[
                         ):
                             value = float(edge)
                         else:
+                            if hi == math.inf:
+                                raise ValueError(f"must be at least {lo:g}")
                             raise ValueError(f"must be between {lo:g} and {hi:g}")
                 out[sec][key] = value
             except ValueError as e:

@@ -62,17 +62,18 @@ class TogglesMixin:
 
     def _on_alignment_toggle(self):
         en = dpg.get_value(self._alignment_enabled)
+        ready = en and self.runner is not None and self.runner.alignment_data is not None
         self.theme.retoken(self._alignment_lbl,
-                           "accent_green" if en else "secondary")
+                           "accent_green" if ready else "secondary")
         dpg.configure_item("alignment_controls", show=en)
 
     def _on_alignment_focus(self):
-        # "Only districts that party wins" is meaningless without a party;
-        # gray it out and force it off when focus is neutral.
+        # Party restrictions apply only to a party's voters.
         neutral = dpg.get_value(self._alignment_focus) == "All residents"
         if neutral:
             dpg.set_value(self._alignment_restrict, False)
         dpg.configure_item(self._alignment_restrict, enabled=not neutral)
+        dpg.configure_item("alignment_party_controls", show=not neutral)
 
     def _on_hc_toggle(self):
         en = dpg.get_value(self._hc_enabled)

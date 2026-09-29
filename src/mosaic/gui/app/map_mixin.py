@@ -10,6 +10,7 @@ from mosaic.gui.map_view import MapView
 from ._common import (
     _FILL_ATTRS,
     _FILL_NEEDS,
+    _FILL_NO_OUTLINE,
     _FILL_NONE,
     _FILL_OPTIONS,
     _MAP_DH,
@@ -76,7 +77,8 @@ class MapMixin:
         self._map_nav_job = None
 
     def _map_can_navigate(self):
-        return (self.map_view is not None and self.map_view._loaded
+        return (not getattr(self, "_workflow_blocks_main", False)
+                and self.map_view is not None and self.map_view._loaded
                 and not self._map_loading and self.runner is not None
                 and self.runner.gdf is not None
                 and id(self.runner.gdf) == self._map_loaded_gdf_id)
@@ -296,7 +298,7 @@ class MapMixin:
     def _sync_map_size(self) -> None:
         """Per frame: when the map area's width settles on a new value, redraw
         the precinct grid at that width off the GUI thread, then swap it in.
-        The height stays fixed. Skipped during an ensemble (the map is frozen)."""
+        The height stays fixed. Skipped during a batch (the map is frozen)."""
         if not dpg.does_item_exist("map_container"):
             return
         rect_w = dpg.get_item_rect_size("map_container")[0]
@@ -559,20 +561,24 @@ class MapMixin:
         for label, _attr, need in _FILL_OPTIONS:
             out.append(label if avail.get(need, False)
                        else f"{label}  ({_FILL_NEEDS[need]})")
-        return out
+        return out + [_FILL_NO_OUTLINE]
 
-    def _set_fill(self, view_attr):
+    def _set_fill(self, view_attr, *, show_lines=True):
         """Point the map at exactly one fill (or None) and repaint."""
         if self.map_view is None:
             return
         for a in _FILL_ATTRS:
             setattr(self.map_view, a, a == view_attr)
+        self.map_view.show_district_lines = show_lines
         self._rerender_map()
 
     def _on_fill_combo(self):
         """Apply the chosen fill; refuse (and snap back to None) if its data is
         absent, since the item is listed but not usable."""
         choice = dpg.get_value(self._fill_combo)
+        if choice == _FILL_NO_OUTLINE:
+            self._set_fill(None, show_lines=False)
+            return
         if choice == _FILL_NONE:
             self._set_fill(None)
             return
@@ -608,6 +614,8 @@ class MapMixin:
         self._fill_avail = avail
         current = dpg.get_value(self._fill_combo)
         dpg.configure_item(self._fill_combo, items=self._fill_labels())
+        if current == _FILL_NO_OUTLINE:
+            return
         for label, _attr, need in _FILL_OPTIONS:
             if current.startswith(label):
                 if avail.get(need, False):
