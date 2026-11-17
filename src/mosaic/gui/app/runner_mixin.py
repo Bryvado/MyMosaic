@@ -171,7 +171,7 @@ class RunnerMixin:
             score_breakdown=best_breakdown,
         )
         if max_iter > 0:
-            dpg.set_value(self._progress, best_iter / max_iter)
+            self._update_run_tiles(best_iter / max_iter)
 
         # Trim local history buffers to match the reverted-to state
         for buf in (
@@ -525,13 +525,17 @@ class RunnerMixin:
         self._clear_fine_tune()
         # Reset status bar and score readouts
         dpg.set_value(self._status_txt, "Status: Idle")
-        dpg.set_value(self._iter_txt,   "Iteration: 0 / 0")
-        dpg.set_value(self._time_txt,   "Time: 0:00")
-        dpg.set_value(self._ips_txt,    "Iter/sec: 0.0")
-        dpg.set_value(self._eta_txt,    "Est. left: --")
-        dpg.set_value(self._progress,   0.0)
-        dpg.set_value(self._score_txt,  "Score: --")
-        dpg.set_value(self._best_txt,   "Best:  --   (iter. --)")
+        # The run strip and the stat tiles carry their own labels, so each
+        # readout resets to the bare value. Progress is the strip's tiles; the
+        # old progress-bar widget went with the redesign.
+        dpg.set_value(self._iter_txt,   "0 / 0")
+        dpg.set_value(self._time_txt,   "--")
+        dpg.set_value(self._ips_txt,    "--")
+        dpg.set_value(self._eta_txt,    "--")
+        self._update_run_tiles(0.0)
+        dpg.set_value(self._score_txt,  "--")
+        dpg.set_value(self._best_txt,   "--")
+        dpg.set_value(self._best_note,  "")
         dpg.set_value(self._temp_txt,   "Temperature: --")
         dpg.set_value(self._acc_txt,    "Entropy: --")
         dpg.set_value(self._succ_txt,   "Accepted steps: --")

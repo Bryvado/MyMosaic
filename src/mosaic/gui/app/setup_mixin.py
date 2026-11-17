@@ -471,7 +471,7 @@ class SetupMixin:
                 # ── Left: Map, Goals, Results ─────────────────────────────
                 with dpg.child_window(width=_SETUP_W, border=False,
                                       tag="setup_column"):
-                    with dpg.child_window(width=-1, height=214, border=True,
+                    with dpg.child_window(width=-1, height=242, border=True,
                                           tag="panel_map_setup"):
                         with dpg.group(horizontal=True):
                             self.theme.text("Map", "heading")
@@ -488,6 +488,12 @@ class SetupMixin:
                             "Start from", lambda: self.theme.text(
                                 "Random partition", "body"), "_hot_start_info")
                         self._start_mode_tooltip = None
+                        # Plan Continuity's reference plan: which file is
+                        # loaded, or "none". Loading one is what makes that
+                        # score available, so its status sits with the map.
+                        self._build_setup_line(
+                            "Reference plan", lambda: self.theme.text(
+                                "none", "muted"), "_alignment_info")
                         # The "county" column can hold any place unit; its name
                         # follows into the goal and the score phrases.
                         self._build_setup_line(
