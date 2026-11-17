@@ -779,7 +779,9 @@ class IOMixin:
             self._alignment_info,
             f"{data.filename} ({data.n_alt_districts} dist{note})",
         )
-        self.theme.retoken(self._alignment_info, "accent_green")
+        # `body`, not green: accent_green means "this score is on", and a
+        # loaded file is not a score (design-system.md).
+        self.theme.retoken(self._alignment_info, "body")
         log.info(
             f"Plan Continuity reference set: {data.filename}, "
             f"{data.n_alt_districts} districts"
@@ -793,8 +795,8 @@ class IOMixin:
             self.runner.alignment_data = None
         dpg.configure_item(self._alignment_enabled, enabled=False)
         self._scores_sig = None
-        dpg.set_value(self._alignment_info, "No plan loaded")
-        self.theme.retoken(self._alignment_info, "error")
+        dpg.set_value(self._alignment_info, "none")
+        self.theme.retoken(self._alignment_info, "muted")
         dpg.set_value(self._alignment_enabled, False)
         self._on_alignment_toggle()
 

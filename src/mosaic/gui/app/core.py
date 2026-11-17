@@ -319,29 +319,37 @@ class MosaicApp(*INTERNAL_MIXINS, *_APP_MIXINS):
                     else self.theme.antinudge_theme,
                 )
 
+    def run_frame(self):
+        """One pass of the frame loop: queued actions, UI refresh, render.
+
+        Split out of run() so the headless tests drive the app through the
+        same code a real session runs, not a copy of it.
+        """
+        while True:
+            try:
+                request = self._session_requests.get_nowait()
+            except Empty:
+                break
+            self._perform_session_action(request)
+        self._sync_workflow_backdrop()
+        self._update_window_layout()
+        if self._ensemble_active:
+            self._update_ensemble_ui()
+        else:
+            self._tick_session_action()
+            if not self._session_action_pending() and not self._workflow_blocks_main:
+                self._update_ui()
+        self._refresh_ens_hist()
+        self._refresh_ens_scatter()
+        self._refresh_ens_roster()
+        self._refresh_ens_map()
+        dpg.render_dearpygui_frame()
+
     def run(self):
         dpg.show_viewport()
         try:
             while dpg.is_dearpygui_running():
-                while True:
-                    try:
-                        request = self._session_requests.get_nowait()
-                    except Empty:
-                        break
-                    self._perform_session_action(request)
-                self._sync_workflow_backdrop()
-                self._update_window_layout()
-                if self._ensemble_active:
-                    self._update_ensemble_ui()
-                else:
-                    self._tick_session_action()
-                    if not self._session_action_pending() and not self._workflow_blocks_main:
-                        self._update_ui()
-                self._refresh_ens_hist()
-                self._refresh_ens_scatter()
-                self._refresh_ens_roster()
-                self._refresh_ens_map()
-                dpg.render_dearpygui_frame()
+                self.run_frame()
         finally:
             if self._ensemble_active:
                 with self._ens_progress.lock:
