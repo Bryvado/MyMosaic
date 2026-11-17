@@ -272,35 +272,148 @@ def test_start_from_does_not_repeat_its_label(app):
     assert dpg.get_value(app._hot_start_info) == "Random partition"
 
 
-def test_fill_opacity_reaches_the_map_and_is_saved(app, tmp_path, monkeypatch):
+# ── Fill opacity and the basemap ─────────────────────────────────────────────
+
+@pytest.fixture
+def style_file(app, tmp_path, monkeypatch):
+    """Point map-style saving at a temporary file, and put it back after."""
     from mosaic.gui.app import map_mixin
-
-    monkeypatch.setattr(map_mixin, "_SETTINGS_DIR", tmp_path)
-    monkeypatch.setattr(map_mixin, "_MAP_STYLE_FILE", tmp_path / "map_style.json")
-    assert dpg.get_item_configuration(app._fill_opacity)["max_value"] == 100
-    try:
-        dpg.set_value(app._fill_opacity, 45)
-        app._on_fill_opacity()
-        assert app.map_view.fill_opacity == pytest.approx(0.45)
-        assert '"fill_opacity": 0.45' in (tmp_path / "map_style.json").read_text()
-        # Read back the way the next launch would.
-        app._fill_opacity_value = 1.0
-        app._load_map_style()
-        assert app._fill_opacity_value == pytest.approx(0.45)
-    finally:
-        dpg.set_value(app._fill_opacity, 100)
-        app._on_fill_opacity()
-    assert app.map_view.fill_opacity == 1.0
-
-
-def test_a_missing_or_broken_style_file_keeps_full_opacity(app, tmp_path, monkeypatch):
-    from mosaic.gui.app import map_mixin
+    from mosaic.gui.app.core import MosaicApp
 
     path = tmp_path / "map_style.json"
+    monkeypatch.setattr(map_mixin, "_SETTINGS_DIR", tmp_path)
     monkeypatch.setattr(map_mixin, "_MAP_STYLE_FILE", path)
-    for content in (None, "not json", '{"fill_opacity": 7}', '{"other": 1}'):
+    saved = (app._fill_opacity_value, app._fill_opacity_basemap,
+             dict(app._basemap_choice), dpg.get_value(app._basemap_chk))
+    app._save_map_style = lambda: MosaicApp._save_map_style(app)
+    yield path
+    app._save_map_style = lambda: None
+    app._fill_opacity_value, app._fill_opacity_basemap = saved[0], saved[1]
+    app._basemap_choice = saved[2]
+    dpg.set_value(app._basemap_chk, saved[3])
+    app._apply_fill_opacity()
+
+
+def test_fill_opacity_reaches_the_map_and_is_saved(app, style_file):
+    assert dpg.get_item_configuration(app._fill_opacity)["max_value"] == 100
+    dpg.set_value(app._basemap_chk, False)
+    app._on_basemap_toggle()
+    dpg.set_value(app._fill_opacity, 80)
+    app._on_fill_opacity()
+    assert app.map_view.fill_opacity == pytest.approx(0.80)
+    assert '"fill_opacity": 0.8' in style_file.read_text()
+    # Read back the way the next launch would.
+    app._fill_opacity_value = 1.0
+    app._load_map_style()
+    assert app._fill_opacity_value == pytest.approx(0.80)
+
+
+def test_opacity_is_45_over_a_basemap_and_100_without(app, style_file):
+    """Two settings behind one slider, so switching the basemap off does not
+    leave a washed-out map behind."""
+    from mosaic.gui.app.basemap_mixin import BASEMAP_OPACITY
+
+    app._fill_opacity_value, app._fill_opacity_basemap = 1.0, BASEMAP_OPACITY
+    dpg.set_value(app._basemap_chk, True)
+    app._on_basemap_toggle()
+    assert dpg.get_value(app._fill_opacity) == 45
+    assert app.map_view.fill_opacity == pytest.approx(0.45)
+    dpg.set_value(app._basemap_chk, False)
+    app._on_basemap_toggle()
+    assert dpg.get_value(app._fill_opacity) == 100
+    assert app.map_view.fill_opacity == 1.0
+    # Changing one leaves the other alone.
+    dpg.set_value(app._fill_opacity, 70)
+    app._on_fill_opacity()
+    dpg.set_value(app._basemap_chk, True)
+    app._on_basemap_toggle()
+    assert dpg.get_value(app._fill_opacity) == 45
+
+
+def test_basemap_is_on_for_districts_and_off_for_other_fills(app, style_file):
+    from mosaic.gui.app._common import _FILL_NONE, _FILL_OPTIONS
+
+    app._basemap_choice = {}
+    dpg.set_value(app._fill_combo, _FILL_NONE)
+    app._on_fill_combo()
+    assert dpg.get_value(app._basemap_chk) is True
+    labels = dpg.get_item_configuration(app._fill_combo)["items"]
+    other = next(label for label in labels
+                 if any(label.startswith(name) for name, _a, _n in _FILL_OPTIONS)
+                 and "(" not in label)
+    dpg.set_value(app._fill_combo, other)
+    app._on_fill_combo()
+    assert dpg.get_value(app._basemap_chk) is False, other
+    # The user can still turn it on for that fill, and it is remembered there.
+    dpg.set_value(app._basemap_chk, True)
+    app._on_basemap_toggle()
+    dpg.set_value(app._fill_combo, _FILL_NONE)
+    app._on_fill_combo()
+    dpg.set_value(app._fill_combo, other)
+    app._on_fill_combo()
+    assert dpg.get_value(app._basemap_chk) is True
+    dpg.set_value(app._fill_combo, _FILL_NONE)
+    app._on_fill_combo()
+
+
+def test_offline_draws_without_a_basemap_and_says_so(app, style_file):
+    dpg.set_value(app._basemap_chk, True)
+    app._on_basemap_toggle()
+    app._basemap_key = None
+    assert _pump(app, lambda: app._basemap_key is not None
+                 and app._basemap_job is None, timeout=30)
+    assert app.map_view.basemap is None
+    message = app.state.get("status_message")[0]
+    assert "Basemap unavailable" in message and "Drawing without it" in message
+    # The map still draws.
+    app._redraw_map_now()
+    assert app.map_view._last_rgba is not None
+
+
+def test_basemap_is_painted_off_the_frame_loop_and_credited(app, style_file, tmp_path):
+    from test_basemap import FakeStore
+
+    offline = app._basemap_store
+    app._basemap_store = FakeStore(tmp_path / "tiles", (-79.0, 35.5))
+    try:
+        dpg.set_value(app._basemap_chk, True)
+        app._on_basemap_toggle()
+        app._basemap_key = None
+        frames = 0
+        while app.map_view.basemap is None and frames < 2000:
+            app.run_frame()
+            frames += 1
+        raster = app.map_view.basemap
+        assert raster is not None and raster.drawn
+        assert raster.key == (app.map_view._w, app.map_view._h,
+                              tuple(app.map_view._view_bounds))
+        assert app._basemap_executor is not None      # painted by the worker
+        assert dpg.is_item_shown(app._basemap_credit)
+        assert "OpenFreeMap" in dpg.get_value(app._basemap_credit_text)
+        # The road through the fake world is in the frame the map draws.
+        app._redraw_map_now()
+        frame = app.map_view._last_rgba[..., :3]
+        outside = app.map_view._pixel_map < 0
+        road = tuple(app.theme.palette.basemap_road_major[:3])
+        ground = tuple(app.theme.palette.basemap_ground[:3])
+        assert (frame[outside] == road).all(axis=-1).sum() > 100
+        assert (frame[outside] == ground).all(axis=-1).mean() > 0.9
+        # Switching it off removes the credit and the basemap from the frame.
+        dpg.set_value(app._basemap_chk, False)
+        app._on_basemap_toggle()
+        for _ in range(3):
+            app.run_frame()
+        assert not dpg.is_item_shown(app._basemap_credit)
+        assert app.map_view.basemap_on is False
+    finally:
+        app._basemap_store = offline
+        app._basemap_key = None
+
+
+def test_a_missing_or_broken_style_file_keeps_the_defaults(app, style_file):
+    for content in (None, "not json", '{"fill_opacity": 7}', '{"other": 1}', "[1]"):
         if content is not None:
-            path.write_text(content)
-        app._fill_opacity_value = 1.0
+            style_file.write_text(content)
+        app._fill_opacity_value, app._fill_opacity_basemap = 1.0, 0.45
         app._load_map_style()
-        assert app._fill_opacity_value == 1.0, content
+        assert (app._fill_opacity_value, app._fill_opacity_basemap) == (1.0, 0.45)

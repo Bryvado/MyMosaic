@@ -34,17 +34,17 @@ def column_widths(client_w: int, gaps: int = 36) -> tuple[int, int, int]:
     return setup, max(MAP_MIN, usable - setup - scores), scores
 
 
-def map_box_height(column_h: int, toolbar_h: int, strip_h: int,
-                   charts_h: int, spacing: int) -> int:
-    """Height left for the map once its neighbours in the column are placed.
+def map_box_height(column_h: int, top: int, below: list[int],
+                   spacing: int) -> int:
+    """Height left for the map box between what sits above and below it.
 
-    Everything else in the centre column has a fixed height, so the map box is
-    the remainder. ``charts_h`` is 0 while the charts are hidden.
+    ``top`` is where the box starts in its column, measured, so whatever the
+    toolbar grows to is already counted. ``below`` holds the height of each
+    block under the map that is currently shown (attribution line, map style,
+    run strip, visuals row); each is preceded by one item-spacing gap.
     """
-    used = toolbar_h + strip_h + charts_h
-    # One item-spacing gap after each block that is actually present.
-    blocks = 2 + (1 if charts_h else 0)
-    return max(160, int(column_h) - used - blocks * spacing)
+    used = sum(below) + len(below) * spacing
+    return max(160, int(column_h) - int(top) - used)
 
 
 def blend_fill(rgb, background, opacity: float):

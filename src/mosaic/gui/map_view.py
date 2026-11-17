@@ -376,6 +376,12 @@ class MapView:
         # Alpha of the fill layer, 0-1. Lines and labels are drawn after the
         # fill and are never faded. Set from the map toolbar; exports copy it.
         self.fill_opacity: float = 1.0
+        # Basemap painted for this raster (mosaic.basemap.BasemapRaster), drawn
+        # under the fill when basemap_on. It belongs to one raster size and
+        # view; a stale one is ignored until its replacement arrives.
+        self.basemap = None
+        self.basemap_on: bool = False
+        self._total_bounds = None            # shapefile bounds, set by load()
 
     # ── Load (thread-safe, no DPG) ────────────────────────────────────────────
 
@@ -409,6 +415,7 @@ class MapView:
             return False
         geometries = np.asarray(gdf.geometry.array).copy()
         bounds = gdf.total_bounds
+        self._total_bounds = tuple(float(v) for v in bounds)
         gw = max(bounds[2] - bounds[0], 1e-9)
         gh = max(bounds[3] - bounds[1], 1e-9)
         scale = min(W / gw, H / gh) * 0.96
@@ -486,6 +493,47 @@ class MapView:
         self._loaded = True
         self._view_bounds = view
         return True
+
+    def projection(self):
+        """The shapefile-to-pixel transform of the loaded raster, for painting
+        a basemap that lines up with it. None before a map is loaded."""
+        from mosaic.basemap import Projection
+
+        if not self._loaded or self._total_bounds is None:
+            return None
+        return Projection(self._total_bounds, self._w, self._h,
+                          tuple(self._view_bounds))
+
+    def _basemap_for_frame(self):
+        """The basemap, if it is on and was painted for exactly this raster."""
+        base = self.basemap
+        if not self.basemap_on or base is None:
+            return None
+        if base.key != (self._w, self._h, tuple(self._view_bounds)):
+            return None
+        return base
+
+    def _fill_over_basemap(self, rgba: np.ndarray, base) -> None:
+        """Layers 1-3 of docs/design/map.md, in place: the basemap everywhere,
+        and the fill composited over it at the fill opacity where there are
+        precincts. Outside them the basemap shows as context."""
+        inside = self._pixel_map >= 0
+        a = min(1.0, max(0.0, self.fill_opacity))
+        ground = base.rgb.astype(np.float32)
+        fill = rgba[..., :3].astype(np.float32)
+        mixed = np.where(inside[..., None], ground + (fill - ground) * a, ground)
+        rgba[..., :3] = np.rint(mixed).astype(np.uint8)
+        rgba[..., 3] = 255
+
+    @staticmethod
+    def _basemap_names(rgba: np.ndarray, base) -> None:
+        """Place names over everything drawn so far, in place."""
+        if base.labels is None:
+            return
+        alpha = base.labels[..., 3:4].astype(np.float32) / 255.0
+        rgba[..., :3] = np.rint(
+            rgba[..., :3] * (1.0 - alpha) + base.labels[..., :3] * alpha
+        ).astype(np.uint8)
 
     # ── DPG upload helpers (GUI thread only) ──────────────────────────────────
 
@@ -701,6 +749,10 @@ class MapView:
         lut = np.full((n + 1, 4), _BLANK_COLOR, dtype=np.uint8)
         lut[n] = self._bg_color
         rgba = self._colorise(lut)
+        base = self._basemap_for_frame()
+        if base is not None:
+            self._fill_over_basemap(rgba, base)
+            self._basemap_names(rgba, base)
         self._last_rgba = rgba
         dpg.set_value(self._ttag, self._to_dpg(rgba))
 
@@ -799,9 +851,12 @@ class MapView:
         # expanded to pixels: every fill mode ends in this one table, so one
         # blend covers them all, and everything drawn after it (borders,
         # place and precinct lines, labels) stays fully opaque.
-        if self.fill_opacity < 1.0:
+        base = self._basemap_for_frame()
+        if base is None and self.fill_opacity < 1.0:
             lut[:n, :3] = blend_fill(lut[:n, :3], self._bg_color, self.fill_opacity)
         rgba = self._colorise(lut)
+        if base is not None:
+            self._fill_over_basemap(rgba, base)
 
         if self.splits_view and self._county_array is not None:
             # County borders always visible in splits view
@@ -838,6 +893,10 @@ class MapView:
         if self.state_outline:
             so = self._static_border_mask("state")
             rgba[self._thicken(so)] = _BORDER_RGBA
+
+        # ── Basemap place names: above the borders, below district labels ────
+        if base is not None:
+            self._basemap_names(rgba, base)
 
         # ── District labels (if enabled) ─────────────────────────────────────
         if self.show_labels and self._precinct_centroids is not None:

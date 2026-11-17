@@ -588,6 +588,7 @@ class MapMixin:
     def _on_fill_combo(self):
         """Apply the chosen fill; refuse (and snap back to None) if its data is
         absent, since the item is listed but not usable."""
+        self._sync_basemap_to_fill()
         choice = dpg.get_value(self._fill_combo)
         if choice == _FILL_NO_OUTLINE:
             self._set_fill(None, show_lines=False)
@@ -614,6 +615,7 @@ class MapMixin:
             return
         dpg.set_value(self._fill_combo, _FILL_NONE)
         self._set_fill(None)
+        self._sync_basemap_to_fill()
 
     def _sync_fill_availability(self, *, elections: bool, race: bool,
                                 compact: bool, pops: bool):
@@ -653,30 +655,46 @@ class MapMixin:
         import json
         try:
             data = json.loads(_MAP_STYLE_FILE.read_text(encoding="utf-8"))
-            value = float(data["fill_opacity"])
-            if 0.0 <= value <= 1.0:
-                self._fill_opacity_value = value
         except Exception:
-            pass                        # missing or unreadable: keep 100%
+            return                      # missing or unreadable: keep defaults
+        if not isinstance(data, dict):
+            return
+        for key, attr in (("fill_opacity", "_fill_opacity_value"),
+                          ("fill_opacity_basemap", "_fill_opacity_basemap")):
+            value = data.get(key)
+            if (isinstance(value, (int, float)) and not isinstance(value, bool)
+                    and 0.0 <= value <= 1.0):
+                setattr(self, attr, float(value))
+        choice = data.get("basemap")
+        if isinstance(choice, dict):
+            self._basemap_choice = {str(k): bool(v) for k, v in choice.items()}
 
     def _save_map_style(self) -> None:
         import json
         try:
             _SETTINGS_DIR.mkdir(parents=True, exist_ok=True)
             _MAP_STYLE_FILE.write_text(
-                json.dumps({"fill_opacity": self._fill_opacity_value}, indent=2),
+                json.dumps({"fill_opacity": self._fill_opacity_value,
+                            "fill_opacity_basemap": self._fill_opacity_basemap,
+                            "basemap": self._basemap_choice}, indent=2),
                 encoding="utf-8")
         except Exception:
             pass
 
     def _on_fill_opacity(self):
         """The toolbar slider: fade the fill, leave lines and labels solid."""
-        self._fill_opacity_value = dpg.get_value(self._fill_opacity) / 100.0
+        value = dpg.get_value(self._fill_opacity) / 100.0
+        # Two settings, one slider: the opacity over a basemap and the opacity
+        # without one are remembered separately.
+        if dpg.get_value(self._basemap_chk):
+            self._fill_opacity_basemap = value
+        else:
+            self._fill_opacity_value = value
         self._save_map_style()
         if self.map_view is None:
             return
-        self.map_view.fill_opacity = self._fill_opacity_value
-        self._rerender_map()
+        self.map_view.fill_opacity = value
+        self._redraw_map_now()
 
     def _on_labels_toggle(self):
         if self.map_view is None:

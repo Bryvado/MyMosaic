@@ -1,6 +1,7 @@
 """Builds the main three-column window layout (one large builder)."""
 from contextlib import contextmanager
 
+from mosaic import basemap as B
 from mosaic.gui.layout import column_widths, map_box_height
 from mosaic.gui.map_navigation import MAX_ZOOM
 
@@ -590,6 +591,14 @@ class SetupMixin:
                             dpg.add_spacer(width=1, tag="map_center_pad",
                                            show=False)
                             self._build_map_canvas()
+                    # Required wherever the basemap is drawn.
+                    # In a group so its measured height is the whole line:
+                    # a bare text item reports its glyph height, not the frame
+                    # padding Dear PyGui lays it out with.
+                    with dpg.group(tag="basemap_credit", show=False) as credit:
+                        self._basemap_credit_text = self.theme.text(
+                            B.ATTRIBUTION, "muted")
+                    self._basemap_credit = credit
                     self._build_run_strip()
                     # Score and Entropy are hidden until step 3 turns them into
                     # Visuals cards, so the map gets the height; Views > Score
@@ -633,7 +642,7 @@ class SetupMixin:
         dpg.setup_dearpygui()
 
         self.map_view = MapView("map_texture", _MAP_DW, _MAP_DH)
-        self.map_view.fill_opacity = self._fill_opacity_value
+        self._sync_basemap_to_fill()
         # MapView is constructed after the initial theme application, so copy
         # the active background into it before a shapefile builds its LUT.
         self._sync_map_bg_to_theme()
@@ -782,6 +791,14 @@ class SetupMixin:
                     "Color the map by one measure. Unavailable choices show "
                     "which data they require.")
                 with dpg.group(horizontal=True, tag="map_overlay_controls"):
+                    self._basemap_chk = dpg.add_checkbox(
+                        label="Basemap", default_value=True,
+                        callback=self._on_basemap_toggle)
+                    self._tooltip(
+                        self._basemap_chk,
+                        "Draw roads, water and place names from OpenFreeMap "
+                        "under the fill. Needs a connection the first time a "
+                        "map is opened; tiles are kept on disk after that.")
                     self._county_overlay = dpg.add_checkbox(
                         label=self._place_unit.capitalize(),
                         default_value=False,
@@ -915,16 +932,19 @@ class SetupMixin:
                 dpg.configure_item(tag, width=width, height=column_h)
         self._columns = (setup_w, map_w, scores_w)
 
-        toolbar_h = dpg.get_item_rect_size("map_toolbar")[1]
-        strip_h = dpg.get_item_rect_size("run_strip")[1]
-        if toolbar_h <= 0 or strip_h <= 0:
+        top = dpg.get_item_state("map_container")["pos"][1]
+        if top <= 0 or dpg.get_item_rect_size("run_strip")[1] <= 0:
             return                      # not laid out yet; next frame
-        charts_h = (dpg.get_item_rect_size("main_charts")[1]
-                    if dpg.is_item_shown("main_charts") else 0)
-        height = map_box_height(column_h, toolbar_h, strip_h, charts_h,
-                                sp.item_spacing[1])
+        below = [dpg.get_item_rect_size(tag)[1] for tag in self._BELOW_MAP
+                 if dpg.does_item_exist(tag) and dpg.is_item_shown(tag)]
+        height = map_box_height(column_h, top, below, sp.item_spacing[1])
         if dpg.get_item_configuration("map_container")["height"] != height:
             dpg.configure_item("map_container", height=height)
+
+    # Blocks under the map, top to bottom. Each one that is shown takes its
+    # measured height out of the map's.
+    _BELOW_MAP = ("basemap_credit", "map_style_row", "run_strip", "main_charts",
+                  "visuals_row")
 
     def _update_map_fill_width(self):
         # Image dimensions exclude frame padding; match the adjacent text button.

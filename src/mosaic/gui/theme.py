@@ -121,6 +121,15 @@ class Palette:
     dem: Color            # Dem party color
     gop: Color            # Rep party color
 
+    # ── Map (docs/design/tokens.json, "Proposed") ────────────────────────────
+    basemap_ground: Color      # land under the basemap
+    basemap_water: Color       # lakes, rivers, sea
+    basemap_road_major: Color  # highways and arterials
+    basemap_road_minor: Color  # local streets, close views only
+    map_district_line: Color   # default district border colour
+    map_place_line: Color      # default city / county line colour
+    map_precinct_line: Color   # default precinct line colour
+
     # ── Buttons (default DPG state) ──────────────────────────────────────────
     button: Color
     button_hovered: Color
@@ -247,6 +256,13 @@ LIGHT = Palette(
     ok=_rgb(35, 125, 65),
     dem=_rgb(50, 95, 185),
     gop=_rgb(190, 50, 50),
+    basemap_ground=_rgb(0xee, 0xf0, 0xf3),
+    basemap_water=_rgb(0xc9, 0xd8, 0xe6),
+    basemap_road_major=_rgb(0xb9, 0xbf, 0xc9),
+    basemap_road_minor=_rgb(0xd5, 0xd9, 0xe0),
+    map_district_line=_rgb(0x1c, 0x1e, 0x22),
+    map_place_line=_rgb(0x8c, 0x5f, 0x00),
+    map_precinct_line=_rgb(0x6e, 0x74, 0x7c),
     # Buttons — near-white with strong text contrast
     button=_rgb(244, 246, 250),
     button_hovered=_rgb(225, 230, 240),
@@ -329,6 +345,13 @@ DARK = Palette(
     ok=_rgb(130, 210, 140),
     dem=_rgb(130, 160, 255),
     gop=_rgb(255, 130, 130),
+    basemap_ground=_rgb(0x2b, 0x2f, 0x36),
+    basemap_water=_rgb(0x33, 0x48, 0x5c),
+    basemap_road_major=_rgb(0x5b, 0x62, 0x70),
+    basemap_road_minor=_rgb(0x47, 0x4d, 0x59),
+    map_district_line=_rgb(0xe8, 0xea, 0xf0),
+    map_place_line=_rgb(0xdc, 0xc8, 0x6e),
+    map_precinct_line=_rgb(0x96, 0x9c, 0xa8),
     # Buttons
     button=_rgb(58, 64, 74),
     button_hovered=_rgb(76, 84, 98),

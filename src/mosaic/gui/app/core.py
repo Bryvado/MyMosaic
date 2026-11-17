@@ -24,6 +24,7 @@ from ._common import (
     dpg,
     threading,
 )
+from .basemap_mixin import BasemapMixin
 from .ensemble_map_mixin import EnsembleMapMixin
 from .ensemble_mixin import EnsembleMixin
 from .ensemble_roster_mixin import EnsembleRosterMixin
@@ -45,6 +46,7 @@ from .updates_mixin import UpdatesMixin
 # App mixins compose one class; order is irrelevant (no method names overlap).
 _APP_MIXINS = (
     SetupMixin,
+    BasemapMixin,
     GoalsMixin,
     ScoresMixin,
     PopupsMixin,
@@ -124,6 +126,7 @@ class MosaicApp(*INTERNAL_MIXINS, *_APP_MIXINS):
         # captures the runner mid-populate. See the map bg-load gate below.
         self._map_data_gdf_id: int = 0
         self._init_map_navigation()
+        self._init_basemap()
 
         # Plot appearance toggle (app-local)
         self._limit_plots: int | str = ""   # DPG checkbox tag, set during setup
@@ -348,6 +351,7 @@ class MosaicApp(*INTERNAL_MIXINS, *_APP_MIXINS):
         self._refresh_ens_scatter()
         self._refresh_ens_roster()
         self._refresh_ens_map()
+        self._sync_basemap()
         dpg.render_dearpygui_frame()
 
     def run(self):
@@ -362,6 +366,7 @@ class MosaicApp(*INTERNAL_MIXINS, *_APP_MIXINS):
             self.state.request_stop()
             self._shutdown_ensemble()
             self._shutdown_map_navigation()
+            self._shutdown_basemap()
             dpg.destroy_context()
 
     # ── Frame update ──────────────────────────────────────────────────────────
