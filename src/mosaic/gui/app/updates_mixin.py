@@ -5,6 +5,7 @@ from ._common import (
     _PHASE_BANDS,
     _PLOT_LIMIT,
     _RENDER_TARGET,
+    _RUN_TILES,
     AlgorithmStatus,
     Path,
     _fmt_dur,
@@ -395,9 +396,8 @@ class UpdatesMixin:
             self.theme.retoken(self._status_txt, "body")
         cur    = snap["current_iteration"]
         max_it = snap["max_iterations"]
-        dpg.set_value(self._iter_txt, f"Iteration: {cur:,} / {max_it:,}")
-        if max_it > 0:
-            dpg.set_value(self._progress, cur / max_it)
+        dpg.set_value(self._iter_txt, f"{cur:,} / {max_it:,}")
+        self._update_run_tiles(cur / max_it if max_it > 0 else 0.0)
 
         # Timer / IPS
         st = self.state.start_time
@@ -411,23 +411,25 @@ class UpdatesMixin:
             else:
                 elapsed = et - st if et > 0 else time.time() - st
             ips = cur / elapsed if elapsed > 0 else 0
-            dpg.set_value(self._time_txt, f"Time: {_fmt_dur(elapsed)}")
-            dpg.set_value(self._ips_txt, f"Iter/sec: {ips:.1f}")
+            dpg.set_value(self._time_txt, _fmt_dur(elapsed))
+            dpg.set_value(self._ips_txt, f"{ips:,.0f}")
             if is_running and ips > 0 and cur < max_it:
                 dpg.set_value(self._eta_txt,
-                              f"Est. left: {_fmt_dur((max_it - cur) / ips)}")
+                              f"{_fmt_dur((max_it - cur) / ips)} left")
             else:
-                dpg.set_value(self._eta_txt, "Est. left: --")
+                dpg.set_value(self._eta_txt, "--")
 
         # Score
         score   = snap["current_score"]
         best    = snap["best_score"]
         best_it = snap["best_iteration"]
+        # A stat tile carries its label above the value, so the value is the
+        # number alone and the iteration goes in the tile's note line.
         if score < float("inf"):
-            dpg.set_value(self._score_txt, f"Score: {score:.2f}")
+            dpg.set_value(self._score_txt, f"{score:,.2f}")
         if best < float("inf"):
-            dpg.set_value(self._best_txt,
-                          f"Best:  {best:.2f}   (iter. {best_it:,})")
+            dpg.set_value(self._best_txt, f"{best:,.2f}")
+            dpg.set_value(self._best_note, f"at {best_it:,}")
 
         # Temperature & acceptance
         temp = snap["current_temperature"]
@@ -451,7 +453,8 @@ class UpdatesMixin:
         dpg.set_value(self._flip_txt,
                       f"Flip rate: {snap['current_flip_rate'] * 100.0:.1f}%")
 
-        # ── Plots & side panels ──────────────────────────────────────────────
+        # ── Score rows, goals and panels ─────────────────────────────────────
+        self._refresh_score_rows()
         self._update_plots_and_panels()
 
         # Keep district-count-dependent sliders bounded
@@ -459,25 +462,24 @@ class UpdatesMixin:
         dpg.configure_item(self._hinge_threshold,  max_value=n_dist_val)
 
         # ── Button states ─────────────────────────────────────────────────────
-        # Scores menu stays usable during a run (changes apply to the next run;
-        # the running config is frozen at start). Hiding a score via that menu
-        # force-disables it (see _set_score_row_vis), so a hidden score can never
-        # keep silently affecting annealing.
+        # Scores stay editable during a run: a change applies to the next run,
+        # since the running config is frozen at start.
         self._sync_seed_controls()
         self._sync_preset_controls()
-        self._apply_goal_row_filter()
         self._sync_goals_panel()
         self._sync_ensemble_controls()
-        dpg.configure_item(self._run_btn,    enabled=not is_busy)
-        dpg.configure_item(self._pause_btn,  enabled=is_running or is_paused or is_partitioning)
-        dpg.configure_item(self._pause_btn,
-                           label="Resume" if is_paused else "Pause")
+        # One primary action, whichever it is now. Start is unavailable only
+        # while partitioning, since Pause and Resume share this button.
+        dpg.configure_item(
+            self._run_btn, enabled=not is_partitioning,
+            label=("Pause" if is_running else "Resume" if is_paused else "Start"))
         dpg.configure_item(self._reset_btn,  enabled=True)
         has_result = self.state.best_assignment is not None
         # Allow saves while paused; block only during active running/partitioning.
         can_save = has_result and not is_running and not is_partitioning
-        dpg.configure_item(self._export_btn,  enabled=can_save)
-        dpg.configure_item(self._metrics_btn, enabled=can_save)
+        # Quick Save and Save Metrics left the left column with the redesign;
+        # they live in File > Save Assignments / Save District Info, which the
+        # same can_save rule gates.
         if self._file_save_asgn_item:
             dpg.configure_item(self._file_save_asgn_item,  enabled=can_save)
             dpg.configure_item(self._file_save_metrics_item, enabled=can_save)
@@ -498,33 +500,20 @@ class UpdatesMixin:
 
         # ── Button nudge / anti-nudge themes ─────────────────────────────────
         graph_ready = self.runner is not None and self.runner.graph is not None
+        # The run strip's single primary action keeps the nudge theme whenever
+        # it can be pressed; there is one nudge per view.
         dpg.bind_item_theme(
             self._run_btn,
-            self.theme.nudge_theme if (not is_busy and graph_ready and not has_result)
-            else self.theme.antinudge_theme,
-        )
-        dpg.bind_item_theme(
-            self._pause_btn,
-            self.theme.nudge_theme if (is_running or is_paused)
+            self.theme.nudge_theme
+            if (is_running or is_paused or (graph_ready and not is_busy))
             else self.theme.antinudge_theme,
         )
         # Once a map exists, Reset is a live "start over" action -- give it the
-        # neutral light-grey look (theme 0 = the app's default button style, with
-        # bright body text) so it reads as available, apart from the dark
-        # inactive buttons. Before any result there's nothing to reset: dark grey.
+        # neutral default button look so it reads as available, apart from the
+        # dark inactive buttons. Before any result there is nothing to reset.
         dpg.bind_item_theme(
             self._reset_btn,
             0 if has_result else self.theme.antinudge_theme,
-        )
-        dpg.bind_item_theme(
-            self._export_btn,
-            self.theme.nudge_theme if (has_result and not is_busy)
-            else self.theme.antinudge_theme,
-        )
-        dpg.bind_item_theme(
-            self._metrics_btn,
-            self.theme.nudge_theme if (has_result and not is_busy)
-            else self.theme.antinudge_theme,
         )
         # Blue while it would do something; otherwise anti-nudge, which now
         # renders as the dark disabled grey in its disabled state.
@@ -548,6 +537,22 @@ class UpdatesMixin:
             dpg.configure_item(window, height=110)
         elif not inactive and window in saved:
             dpg.configure_item(window, height=saved.pop(window))
+
+    def _update_run_tiles(self, fraction: float) -> None:
+        """Draw progress as _RUN_TILES filled squares.
+
+        Only tiles that changed are recoloured, so a run repaints at most one
+        tile per 1/20th of progress instead of a bar every frame.
+        """
+        lit = max(0, min(_RUN_TILES, int(fraction * _RUN_TILES + 1e-9)))
+        if lit == self._run_tiles_lit:
+            return
+        on = self.theme.color("nudge_button")
+        off = self.theme.color("frame_bg")
+        for i in range(_RUN_TILES):
+            colour = on if i < lit else off
+            dpg.configure_item(f"run_tile_{i}", fill=colour, color=colour)
+        self._run_tiles_lit = lit
 
     def _update_plots_and_panels(self) -> None:
         """Per-frame plot redraws and side panel refreshes."""
@@ -1263,30 +1268,55 @@ class UpdatesMixin:
         insp = self.runner._pending_inspection
         path = (getattr(insp, "path", None) or self.state.shapefile_path or "")
         stem = Path(path).stem if path else "shapefile"
-        dpg.set_value(self._shp_info, f"Loaded: {stem}")
-        self.theme.retoken(self._shp_info, "success_pale")
+        # The row already carries the "Loaded" label, so the value is the name.
+        dpg.set_value(self._shp_info, stem)
+        self.theme.retoken(self._shp_info, "body")
 
         # Read actual loaded state from runner — avoids races on _loaded_config.
+        # A score row draws its own name colour and phrase from these checkboxes
+        # in _refresh_score_rows, so all this has to do is say which scores this
+        # map can support. An unusable score stays listed and unchecked.
         has_county = self.runner.county_array is not None
-        # The county scores need the column to hold more than one place, not a
+        # The place scores need the column to hold more than one place, not a
         # column named for counties: with a single value every one of them is
         # identically 0 for every plan, which reads as a perfect score while
-        # measuring nothing. Two or more and they are live, whether the column
-        # holds counties or the cities of one county. Map overlays still key off
-        # has_county, since drawing one outline is harmless.
+        # measuring nothing. Map overlays still key off has_county, since
+        # drawing one outline is harmless.
         has_place = self._has_place_column()
-        _place_token = "secondary" if has_place else "disabled_deep"
-        for chk, lbl, ctrl_tag in [
-            (self._cs_enabled, self._cs_lbl, "cs_controls"),
-            (self._hsplit_enabled, self._hsplit_lbl, "hsplit_controls"),
-            (self._county_bias_enabled, self._county_bias_lbl,
-             "county_bias_controls"),
-        ]:
-            dpg.configure_item(chk, enabled=has_place)
-            self.theme.retoken(lbl, _place_token)
-            if not has_place:
+        has_elections = bool(self.runner.election_arrays)
+        self._has_elections = has_elections
+        has_race = self.runner.vap_data is not None
+        self._has_race = has_race
+        _applic = self.state.race_score_applicable
+
+        usable = {
+            "_alignment_enabled": self.runner.alignment_data is not None,
+            "_cs_enabled": has_place,
+            "_hsplit_enabled": has_place,
+            "_county_bias_enabled": has_place,
+            "_mm_enabled": has_elections,
+            "_eg_enabled": has_elections,
+            "_pb_enabled": has_elections,
+            "_pg_enabled": has_elections,
+            "_hprop_enabled": has_elections,
+            "_hcmp_enabled": has_elections,
+            "_seats_enabled": has_elections,
+            "_majority_enabled": has_elections,
+            "_hinge_enabled": has_elections,
+            "_representation_enabled":
+                has_race and _applic.get("representation", True) is not False,
+            "_minority_cohesion_enabled":
+                has_race and _applic.get("minority_cohesion", True) is not False,
+            "_community_congruence_enabled":
+                has_race and _applic.get("community_congruence", True) is not False,
+        }
+        for attr, ok in usable.items():
+            chk = getattr(self, attr)
+            dpg.configure_item(chk, enabled=ok)
+            if not ok and dpg.get_value(chk):
                 dpg.set_value(chk, False)
-                dpg.configure_item(ctrl_tag, show=False)
+        self._scores_sig = None
+
         dpg.configure_item(self._county_overlay, enabled=has_county)
         dpg.configure_item(self._splits_view, enabled=has_county)
         if not has_county and dpg.get_value(self._county_overlay):
@@ -1306,12 +1336,8 @@ class UpdatesMixin:
         # PP alone is enough to shade compactness -- the overlay blends in Reock
         # when reock_data is present and falls back to PP-only when it isn't, so
         # don't gate on Reock.
-        has_elections = bool(self.runner.election_arrays)
-        self._has_elections = has_elections
-        has_compact = self.runner is not None and self.runner.pp_data is not None
-        has_pops = self.runner is not None and self.runner.populations is not None
-        has_race = self.runner is not None and self.runner.vap_data is not None
-        self._has_race = has_race   # also gates the comet's demographic metrics
+        has_compact = self.runner.pp_data is not None
+        has_pops = self.runner.populations is not None
         self._sync_fill_availability(
             elections=has_elections, race=has_race,
             compact=has_compact, pops=has_pops,
@@ -1321,56 +1347,6 @@ class UpdatesMixin:
             # Elections loaded from Recent; the user picks the fill manually to
             # avoid an unintended overlay.
 
-        # Enable/disable partisan metric controls based on election data
-        _pt_token = "secondary" if has_elections else "disabled_deep"
-        for chk, lbl in [
-            (self._mm_enabled,       self._mm_lbl),
-            (self._eg_enabled,       self._eg_lbl),
-            (self._pb_enabled,       self._pb_lbl),
-            (self._pg_enabled,       self._pg_lbl),
-            (self._hprop_enabled,    self._hprop_lbl),
-            (self._hcmp_enabled,     self._hcmp_lbl),
-            (self._seats_enabled,    self._seats_lbl),
-            (self._majority_enabled, self._majority_lbl),
-            (self._hinge_enabled,    self._hinge_lbl),
-        ]:
-            dpg.configure_item(chk, enabled=has_elections)
-            self.theme.retoken(lbl, _pt_token)
-        if not has_elections:
-            for chk, ctrl_tag in [
-                (self._mm_enabled,       "mm_controls"),
-                (self._eg_enabled,       "eg_controls"),
-                (self._pb_enabled,       "pb_controls"),
-                (self._pg_enabled,       "pg_controls"),
-                (self._hprop_enabled,    "hprop_controls"),
-                (self._hcmp_enabled,     "hcmp_controls"),
-                (self._seats_enabled,    "seats_controls"),
-                (self._majority_enabled, "majority_controls"),
-                (self._hinge_enabled,    "hinge_controls"),
-            ]:
-                dpg.set_value(chk, False)
-                dpg.configure_item(ctrl_tag, show=False)
-        # Enable/disable demographic metric controls based on demographic data. Mirrors the
-        # partisan block above: Representation ships visible by default (its group's
-        # flagship), so without demographics loaded its checkbox has to read as
-        # unavailable rather than as a live control that silently scores 0.
-        # A score with nothing to measure here returns its BEST value for every
-        # plan, so it reads as unavailable rather than as a live control.
-        _applic = self.state.race_score_applicable
-        for chk, lbl, ctrl_tag, sid in [
-            (self._representation_enabled, self._representation_lbl,
-             "representation_controls", "representation"),
-            (self._minority_cohesion_enabled, self._minority_cohesion_lbl,
-             "minority_cohesion_controls", "minority_cohesion"),
-            (self._community_congruence_enabled, self._community_congruence_lbl,
-             "community_congruence_controls", "community_congruence"),
-        ]:
-            usable = has_race and _applic.get(sid, True) is not False
-            dpg.configure_item(chk, enabled=usable)
-            self.theme.retoken(lbl, "secondary" if usable else "disabled_deep")
-            if not usable:
-                dpg.set_value(chk, False)
-                dpg.configure_item(ctrl_tag, show=False)
         # Enable/disable partisan panel menu items; close any open ones when unavailable
         for item_tag, panel_tag in [
             (self._panel_partisan_item,   "panel_partisanship"),
