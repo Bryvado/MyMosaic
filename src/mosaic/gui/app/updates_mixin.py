@@ -2,7 +2,6 @@
 from mosaic.gui.choice_radio import RADIO_HELP
 
 from ._common import (
-    _CONTRIB_BAR_METRICS,
     _PHASE_BANDS,
     _PLOT_LIMIT,
     _RENDER_TARGET,
@@ -466,6 +465,8 @@ class UpdatesMixin:
         # keep silently affecting annealing.
         self._sync_seed_controls()
         self._sync_preset_controls()
+        self._apply_goal_row_filter()
+        self._sync_goals_panel()
         self._sync_ensemble_controls()
         dpg.configure_item(self._run_btn,    enabled=not is_busy)
         dpg.configure_item(self._pause_btn,  enabled=is_running or is_paused or is_partitioning)
@@ -1037,33 +1038,24 @@ class UpdatesMixin:
         if dpg.is_item_shown("panel_cut_edges"):
             _render(self._buf_cuts, "cuts_series", "cuts_x", "cuts_y")
 
-        # Score Contributors panel — live horizontal bar chart, active metrics only.
-        # score_breakdown holds raw weighted contributions; shares are derived here
-        # so they sum to 100 over exactly the bars on screen.
+        # Score Contributors panel — live bars grouped by goal. score_breakdown
+        # holds raw weighted contributions; shares are derived here over every
+        # contributor, so the goal shares on screen sum to 100.
         if dpg.is_item_shown("panel_score_contrib"):
             with self.state._lock:
                 bd = dict(self.state.score_breakdown)
-            active = [(i, name) for i, (name, _) in enumerate(_CONTRIB_BAR_METRICS)
-                      if bd.get(name, 0.0) > 0.0]
-            if active:
-                total = sum(bd[name] for _, name in active)
-                scale = 100.0 / total if total > 0.0 else 0.0
-                n = len(active)
-                # Y ascends, so lay the first metric out at the top.
-                dpg.set_axis_ticks(
-                    "contrib_y",
-                    tuple((name, float(n - pos))
-                          for pos, (_, name) in enumerate(active)),
-                )
-                dpg.set_axis_limits("contrib_y", 0.5, n + 0.5)
-                for pos, (orig_i, name) in enumerate(active):
-                    dpg.set_value(self._contrib_bar_series[orig_i],
-                                  [[bd[name] * scale], [float(n - pos)]])
-                    dpg.configure_item(self._contrib_bar_series[orig_i], show=True)
-            active_idx = {i for i, _ in active}
-            for i in range(len(_CONTRIB_BAR_METRICS)):
-                if i not in active_idx:
-                    dpg.configure_item(self._contrib_bar_series[i], show=False)
+            preset, states = self._goal_snapshot()
+            groups = self._contrib_groups(bd, preset)
+            total = sum(v for _k, items in groups for _n, v in items)
+            detail = bool(dpg.get_value(self._contrib_detail))
+            sig = (detail, self._place_unit, round(total, 4),
+                   tuple((k, tuple((n, round(v, 5)) for n, v in items))
+                         for k, items in groups),
+                   tuple(sorted((g, s.label, s.exact)
+                                for g, s in states.items())))
+            if sig != self._contrib_sig:
+                self._contrib_sig = sig
+                self._render_score_contrib(groups, total, states, detail)
 
         # Partisanship panel — live bar chart from current assignment
         if dpg.is_item_shown("panel_partisanship"):
@@ -1257,6 +1249,9 @@ class UpdatesMixin:
             dpg.set_value(s, empty)
         for i, s in enumerate(self._contrib_bar_series):
             dpg.set_value(s, [[0.0], [float(i + 1)]])   # horizontal: value, slot
+        for i, s in enumerate(self._contrib_goal_series):
+            dpg.set_value(s, [[0.0], [float(i + 1)]])
+        self._contrib_sig = None
 
     # ── Shapefile info label ──────────────────────────────────────────────────
 
@@ -1273,12 +1268,25 @@ class UpdatesMixin:
 
         # Read actual loaded state from runner — avoids races on _loaded_config.
         has_county = self.runner.county_array is not None
-        self.theme.retoken(self._cs_lbl,
-                           "secondary" if has_county else "disabled_deep")
-        dpg.configure_item(self._cs_enabled, enabled=has_county)
-        if not has_county:
-            dpg.set_value(self._cs_enabled, False)
-            dpg.configure_item("cs_controls", show=False)
+        # The county scores need the column to hold more than one place, not a
+        # column named for counties: with a single value every one of them is
+        # identically 0 for every plan, which reads as a perfect score while
+        # measuring nothing. Two or more and they are live, whether the column
+        # holds counties or the cities of one county. Map overlays still key off
+        # has_county, since drawing one outline is harmless.
+        has_place = self._has_place_column()
+        _place_token = "secondary" if has_place else "disabled_deep"
+        for chk, lbl, ctrl_tag in [
+            (self._cs_enabled, self._cs_lbl, "cs_controls"),
+            (self._hsplit_enabled, self._hsplit_lbl, "hsplit_controls"),
+            (self._county_bias_enabled, self._county_bias_lbl,
+             "county_bias_controls"),
+        ]:
+            dpg.configure_item(chk, enabled=has_place)
+            self.theme.retoken(lbl, _place_token)
+            if not has_place:
+                dpg.set_value(chk, False)
+                dpg.configure_item(ctrl_tag, show=False)
         dpg.configure_item(self._county_overlay, enabled=has_county)
         dpg.configure_item(self._splits_view, enabled=has_county)
         if not has_county and dpg.get_value(self._county_overlay):

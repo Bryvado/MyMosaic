@@ -342,6 +342,53 @@ _CONTRIB_BAR_METRICS = [
     ("Community Dispersion",    (110, 185, 165, 220)),
 ]
 
+# Score Contributors grouping: which preset section each breakdown metric comes
+# from, so mosaic.goals can say which goal it serves. Keys match the names
+# _build_score_breakdown emits. Partisan Hinge belongs to no section and no
+# goal, so it gets a row of its own.
+_CONTRIB_METRIC_SECTION = {
+    "Cut Edges":               "cut_edges",
+    "Excess Splits":           "county_splits",
+    "Single-County Districts": "county_splits",
+    "Population Deviation":    "pop_deviation",
+    "Plan Continuity":         "alignment",
+    "Polsby-Popper":           "polsby_popper",
+    "Reock":                   "reock",
+    "Mean-Median":             "mean_median",
+    "Efficiency Gap":          "efficiency_gap",
+    "Partisan Bias":           "partisan_bias",
+    "Partisan Gini":           "partisan_gini",
+    "Dem Seats":               "dem_seats",
+    "D Majority":              "majority_chance",
+    "R Majority":              "majority_chance",
+    "Partisan Hinge":          None,
+    "Compactness":             "holistic_compactness",
+    "County Congruence":       "holistic_splitting",
+    "Proportionality":         "holistic_proportionality",
+    "Competitiveness":         "holistic_competitiveness",
+    "Electoral Opportunity":   "representation",
+    "Neighborhood Severance":  "minority_cohesion",
+    "Community Dispersion":    "community_congruence",
+}
+
+# One bar colour per Score Contributors group. Each matches the bar colour of
+# the goal's leading metric above, so a goal bar and the score bars it expands
+# into read as the same thing; Partisan fairness takes Partisan Gini's pink
+# rather than Proportionality's brown, which sat too close to the two
+# geography goals.
+_CONTRIB_GOAL_COLORS = {
+    "favor_party": (180, 80,  220, 220),
+    "fairness":    (200, 120, 160, 220),
+    "competitive": (50,  150, 90,  220),
+    "minority":    (120, 180, 120, 220),
+    "compact":     (220, 160, 60,  220),
+    "counties":    (200, 140, 50,  220),
+    "continuity":  (150, 120, 210, 220),
+    "equal_pop":   (220, 200, 70,  220),
+    "_hinge":      (140, 90,  200, 220),
+    "_other":      (160, 160, 165, 220),
+}
+
 # ── Layout constants ──────────────────────────────────────────────────────────
 _VP_W         = 1340
 _VP_H         = 1000
@@ -549,6 +596,8 @@ __all__ = [
     "_FILL_NEEDS",
     "_FILL_ATTRS",
     "_CONTRIB_BAR_METRICS",
+    "_CONTRIB_METRIC_SECTION",
+    "_CONTRIB_GOAL_COLORS",
     "_VP_W",
     "_VP_H",
     "_LEFT_W",

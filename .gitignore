@@ -56,3 +56,6 @@ cache/*
 !cache/North_Carolina_Simplified.pkl
 !cache/North_Carolina_Simplified.pp.pkl
 .claude/
+
+# Mosaic app settings written next to the checkout at runtime
+.mosaic/

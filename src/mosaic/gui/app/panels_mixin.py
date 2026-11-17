@@ -1,7 +1,13 @@
 """Score/metric side-panel builders and reference-line themes."""
+from mosaic import goals as G
 from mosaic.gui.choice_radio import RADIO_HELP, choice_radio
 
-from ._common import _CONTRIB_BAR_METRICS, _LEFT_W, dpg
+from ._common import (
+    _CONTRIB_BAR_METRICS,
+    _CONTRIB_GOAL_COLORS,
+    _LEFT_W,
+    dpg,
+)
 
 
 class PanelsMixin:
@@ -785,10 +791,34 @@ class PanelsMixin:
                 "muted",
             )
 
+    # Score Contributors groups, in order: one per goal, then the two things
+    # no goal owns. Hinge is its own row because it belongs to no goal, and
+    # "Other scores" collects the advanced metrics (Cut Edges, Polsby-Popper,
+    # Reock, Classic Splitting) that a goal deliberately does not drive.
+    CONTRIB_GROUPS = tuple(g.gid for g in G.GOALS) + ("_hinge", "_other")
+    _CONTRIB_GROUP_TITLES = {"_hinge": "Supermajority/Hinge",
+                             "_other": "Other scores"}
+    _CONTRIB_TABLE_ROWS = len(CONTRIB_GROUPS) + len(_CONTRIB_BAR_METRICS)
+
+    def contrib_group_title(self, key: str) -> str:
+        """Row heading for a contributors group, with the place unit filled in."""
+        if key in self._CONTRIB_GROUP_TITLES:
+            return self._CONTRIB_GROUP_TITLES[key]
+        return G.GOALS_BY_ID[key].title(self._place_unit)
+
     def _build_score_contrib_panel(self):
-        """Horizontal bar chart: metric names on the category (Y) axis, magnitude
-        on the value (X) axis. Horizontal because the names are long enough that a
-        vertical chart forced an abbreviation table.
+        """Horizontal bars grouped by goal, over a table of shares.
+
+        One bar per goal rather than per metric: twenty-two bars said which
+        metrics were large, not which of the user's priorities was winning.
+        The strength word sits next to the measured share so the two can
+        disagree visibly -- a goal set to Light that is in fact running the
+        total is the thing worth seeing.
+
+        Horizontal because the names are long enough that a vertical chart
+        forced an abbreviation table. Both sets of bar series are built once and
+        only one set is ever shown, so switching to the per-score view costs
+        nothing per frame.
         """
         self._contrib_bar_themes = []
         for _, rgba in _CONTRIB_BAR_METRICS:
@@ -799,37 +829,89 @@ class PanelsMixin:
                         category=dpg.mvThemeCat_Plots,
                     )
             self._contrib_bar_themes.append(t)
+        self._contrib_goal_themes = []
+        for key in self.CONTRIB_GROUPS:
+            with dpg.theme() as t:
+                with dpg.theme_component(dpg.mvBarSeries):
+                    dpg.add_theme_color(
+                        dpg.mvPlotCol_Fill, _CONTRIB_GOAL_COLORS[key],
+                        category=dpg.mvThemeCat_Plots,
+                    )
+            self._contrib_goal_themes.append(t)
 
-        # Width is pinned (min_size[0] == max_size[0]): the category axis is sized
-        # for the metric names, and a fixed width keeps the intro text's wrap in
-        # step with it. Height stays draggable, since the bar count varies.
-        w = 252
+        # Width is pinned (min_size[0] == max_size[0]): the category axis is
+        # sized for the group names, and a fixed width keeps the intro text's
+        # wrap and the table's columns in step with it. Height stays draggable.
+        w = 396
         with dpg.window(
             label="Score Contributors", tag="panel_score_contrib",
-            show=False, width=w, height=336,
-            min_size=[w, 200], max_size=[w, 10_000],
+            show=False, width=w, height=520,
+            min_size=[w, 260], max_size=[w, 10_000],
             pos=[_LEFT_W + 80, 80],
             on_close=lambda: dpg.set_value(self._panel_contrib_item, False),
         ):
             self.theme.text(
-                "Share of the current total from each weighted score. Longer bars "
-                "have more influence.",
+                "Share of the current total from each goal. Compare the share "
+                "against the strength you set it to.",
                 "muted",
                 wrap=w - 20,
             )
+            self._contrib_detail = dpg.add_checkbox(
+                label="Show individual scores",
+                callback=lambda: setattr(self, "_contrib_sig", None),
+            )
+            self._tooltip(
+                self._contrib_detail,
+                "Expand each goal into the scores underneath it.",
+            )
             dpg.add_spacer(height=2)
-            with dpg.plot(height=-1, width=-1, no_mouse_pos=True, no_menus=True):
+            with dpg.plot(height=224, width=-1, no_mouse_pos=True,
+                          no_menus=True):
                 # X is the value axis, Y the category axis (horizontal bars).
-                dpg.add_plot_axis(dpg.mvXAxis, tag="contrib_x", label="% of total")
+                dpg.add_plot_axis(dpg.mvXAxis, tag="contrib_x",
+                                  label="% of total")
                 with dpg.plot_axis(dpg.mvYAxis, tag="contrib_y",
                                    no_gridlines=True):
+                    self._contrib_goal_series = []
+                    for i, key in enumerate(self.CONTRIB_GROUPS):
+                        series = dpg.add_bar_series(
+                            [0.0], [float(i + 1)], weight=0.7, horizontal=True,
+                            label=f"##cg{i}",
+                        )
+                        dpg.bind_item_theme(series, self._contrib_goal_themes[i])
+                        self._contrib_goal_series.append(series)
                     self._contrib_bar_series = []
                     for i, (name, _) in enumerate(_CONTRIB_BAR_METRICS):
                         s = dpg.add_bar_series(
                             [0.0], [float(i + 1)], weight=0.7, horizontal=True,
-                            label="##cb{}".format(i),
+                            label="##cb{}".format(i), show=False,
                         )
                         dpg.bind_item_theme(s, self._contrib_bar_themes[i])
                         self._contrib_bar_series.append(s)
             dpg.set_axis_limits("contrib_x", 0.0, 100.0)
-            dpg.set_axis_limits("contrib_y", 0.5, len(_CONTRIB_BAR_METRICS) + 0.5)
+            dpg.set_axis_limits("contrib_y", 0.5, len(self.CONTRIB_GROUPS) + 0.5)
+            dpg.add_separator()
+            self._contrib_empty = self.theme.text(
+                "Nothing is contributing yet. Start a run, or turn a score on.",
+                "muted", wrap=w - 20,
+            )
+            # A fixed pool of rows, filled by set_value and shown or hidden.
+            # Rebuilding the table each frame would be the one heavy redraw
+            # this panel cannot afford on software rendering.
+            self._contrib_table_rows = []
+            with dpg.table(header_row=True, policy=dpg.mvTable_SizingFixedFit,
+                           borders_innerH=False, borders_outerH=False,
+                           borders_innerV=False, borders_outerV=False,
+                           tag="contrib_table"):
+                dpg.add_table_column(label="Goal / score", width_fixed=True,
+                                     init_width_or_weight=202)
+                dpg.add_table_column(label="Strength", width_fixed=True,
+                                     init_width_or_weight=78)
+                dpg.add_table_column(label="Share", width_fixed=True,
+                                     init_width_or_weight=58)
+                for _ in range(self._CONTRIB_TABLE_ROWS):
+                    with dpg.table_row(show=False) as tr:
+                        cells = (self.theme.text("", "body"),
+                                 self.theme.text("", "muted"),
+                                 self.theme.text("", "muted"))
+                    self._contrib_table_rows.append((tr, cells))

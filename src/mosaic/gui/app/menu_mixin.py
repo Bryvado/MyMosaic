@@ -537,8 +537,10 @@ class MenuMixin:
                 path = d.get("file_path_name", "") if isinstance(d, dict) else ""
                 if path:
                     on_path(path)
+            # Not modal: see _pick_alignment_dpg -- a modal file dialog stops
+            # any later modal from opening in Dear PyGui 2.3.
             with dpg.file_dialog(
-                directory_selector=False, show=True, modal=True, callback=_cb,
+                directory_selector=False, show=True, modal=False, callback=_cb,
                 cancel_callback=lambda *_: None, default_path=str(pdir),
                 default_filename="preset" if save else "",
                 width=700, height=450, tag="__preset_file_dialog",
