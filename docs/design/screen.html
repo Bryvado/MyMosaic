@@ -1,0 +1,301 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mosaic main screen (design mockup)</title>
+<style>
+@font-face{font-family:Inter;font-weight:400;src:url(../../src/mosaic/assets/fonts/inter/Inter-Regular.ttf)}
+@font-face{font-family:Inter;font-weight:600;src:url(../../src/mosaic/assets/fonts/inter/Inter-SemiBold.ttf)}
+body{margin:0}
+</style>
+</head>
+<body>
+<!-- Design mockup of the target screen. Static HTML for reference only; the app is Dear PyGui. See BUILD.md. -->
+<div style="min-height: 1180px; box-sizing: border-box; background: #1c1e22; color: #e8eaf0; font-family: Inter, system-ui, sans-serif; font-size: 14px; line-height: 1.4; display: flex; flex-direction: column">
+<header style="background: #181a1e; padding: 6px 12px; display: flex; flex-wrap: wrap; align-items: center; gap: 16px">
+<span style="font-size: 20px; font-weight: 600; color: #ffc83c">Mosaic</span>
+<nav aria-label="Menu" style="display: flex; flex-wrap: wrap; gap: 2px">
+<button type="button" style="font: inherit; border: 0; background: transparent; color: #e8eaf0; padding: 6px 8px; border-radius: 5px; cursor: pointer">File</button><button type="button" style="font: inherit; border: 0; background: transparent; color: #e8eaf0; padding: 6px 8px; border-radius: 5px; cursor: pointer">Configuration</button><button type="button" style="font: inherit; border: 0; background: transparent; color: #e8eaf0; padding: 6px 8px; border-radius: 5px; cursor: pointer">Appearance</button><button type="button" style="font: inherit; border: 0; background: transparent; color: #e8eaf0; padding: 6px 8px; border-radius: 5px; cursor: pointer">Views</button><button type="button" style="font: inherit; border: 0; background: transparent; color: #e8eaf0; padding: 6px 8px; border-radius: 5px; cursor: pointer">Advanced</button><button type="button" style="font: inherit; border: 0; background: transparent; color: #e8eaf0; padding: 6px 8px; border-radius: 5px; cursor: pointer">Help</button>
+</nav>
+<span style="margin-left: auto; color: #969ca8">tarrant · running ReCom</span>
+</header>
+<main style="flex: 1; padding: 12px; display: flex; flex-wrap: wrap; align-items: flex-start; gap: 12px">
+<section aria-label="Plan" style="flex: 1 1 270px; max-width: 320px; display: flex; flex-direction: column; gap: 12px">
+<div style="background: #24272c; border: 1px solid #3a404a; border-radius: 4px; padding: 12px; display: flex; flex-direction: column; gap: 10px">
+<div style="display: flex; justify-content: space-between; align-items: center; gap: 8px"><h2 style="margin: 0; font-size: 15px; font-weight: 600; color: #dcc86e">Map</h2><button type="button" style="font: inherit; border: 0; border-radius: 5px; padding: 6px 12px; background: #3a404a; color: #e8eaf0; cursor: pointer">Open shapefile…</button></div>
+<div style="display: flex; justify-content: space-between; align-items: center; gap: 8px"><span style="color: #969ca8">Loaded</span><span>tarrant</span></div>
+<div style="display: flex; justify-content: space-between; align-items: center; gap: 8px"><span style="color: #969ca8">Start from</span><span>Random partition</span></div>
+<div style="display: flex; gap: 8px">
+<div style="flex: 1; display: flex; flex-direction: column; gap: 4px"><label for="districts" style="color: #b4b8c3">Districts</label><input id="districts" value="4" style="font: inherit; color: #e8eaf0; background: #343840; border: 1px solid #4e5664; border-radius: 5px; padding: 5px 8px; box-sizing: border-box; width: 100%"></div>
+<div style="flex: 1; display: flex; flex-direction: column; gap: 4px"><label for="iters" style="color: #b4b8c3">Iterations</label><input id="iters" value="1,000,000" style="font: inherit; color: #e8eaf0; background: #343840; border: 1px solid #4e5664; border-radius: 5px; padding: 5px 8px; box-sizing: border-box; width: 100%"></div>
+</div>
+</div>
+<div style="background: #24272c; border: 1px solid #3a404a; border-radius: 4px; padding: 12px; display: flex; flex-direction: column; gap: 10px; gap: 6px">
+<div style="display: flex; justify-content: space-between; align-items: center; gap: 8px"><h2 style="margin: 0; font-size: 15px; font-weight: 600; color: #dcc86e">Goals</h2><button type="button" style="font: inherit; border: 0; border-radius: 5px; padding: 6px 12px; background: #3a404a; color: #e8eaf0; cursor: pointer; padding: 3px 10px">Starting points…</button></div>
+<div style="display: flex; justify-content: space-between; align-items: center; gap: 8px"><label for="goal0" style="color: #e8eaf0">Compact districts</label><select id="goal0" style="font: inherit; color: #e8eaf0; background: #343840; border: 1px solid #4e5664; border-radius: 5px; padding: 5px 8px; box-sizing: border-box; padding: 3px 6px; width: 124px"><option>Off</option><option>Light</option><option>Moderate</option><option>Strong</option><option selected>Very strong</option><option>Dominant</option></select></div><div style="display: flex; justify-content: space-between; align-items: center; gap: 8px"><label for="goal1" style="color: #e8eaf0">Equal population</label><select id="goal1" style="font: inherit; color: #e8eaf0; background: #343840; border: 1px solid #4e5664; border-radius: 5px; padding: 5px 8px; box-sizing: border-box; padding: 3px 6px; width: 124px"><option>Off</option><option>Light</option><option>Moderate</option><option selected>Strong</option><option>Very strong</option><option>Dominant</option></select></div><div style="display: flex; justify-content: space-between; align-items: center; gap: 8px"><label for="goal2" style="color: #e8eaf0">Keep cities whole</label><select id="goal2" style="font: inherit; color: #e8eaf0; background: #343840; border: 1px solid #4e5664; border-radius: 5px; padding: 5px 8px; box-sizing: border-box; padding: 3px 6px; width: 124px"><option>Off</option><option>Light</option><option selected>Moderate</option><option>Strong</option><option>Very strong</option><option>Dominant</option></select></div><div style="display: flex; justify-content: space-between; align-items: center; gap: 8px"><label for="goal3" style="color: #e8eaf0">Minority representation</label><select id="goal3" style="font: inherit; color: #e8eaf0; background: #343840; border: 1px solid #4e5664; border-radius: 5px; padding: 5px 8px; box-sizing: border-box; padding: 3px 6px; width: 124px"><option>Off</option><option>Light</option><option selected>Moderate</option><option>Strong</option><option>Very strong</option><option>Dominant</option></select></div><div style="display: flex; justify-content: space-between; align-items: center; gap: 8px"><label for="goal4" style="color: #969ca8">Partisan fairness</label><select id="goal4" style="font: inherit; color: #e8eaf0; background: #343840; border: 1px solid #4e5664; border-radius: 5px; padding: 5px 8px; box-sizing: border-box; padding: 3px 6px; width: 124px"><option selected>Off</option><option>Light</option><option>Moderate</option><option>Strong</option><option>Very strong</option><option>Dominant</option></select></div><div style="display: flex; justify-content: space-between; align-items: center; gap: 8px"><label for="goal5" style="color: #969ca8">Favor a party</label><select id="goal5" style="font: inherit; color: #e8eaf0; background: #343840; border: 1px solid #4e5664; border-radius: 5px; padding: 5px 8px; box-sizing: border-box; padding: 3px 6px; width: 124px"><option selected>Off</option><option>Light</option><option>Moderate</option><option>Strong</option><option>Very strong</option><option>Dominant</option></select></div><div style="display: flex; justify-content: space-between; align-items: center; gap: 8px"><label for="goal6" style="color: #969ca8">Competitive districts</label><select id="goal6" style="font: inherit; color: #e8eaf0; background: #343840; border: 1px solid #4e5664; border-radius: 5px; padding: 5px 8px; box-sizing: border-box; padding: 3px 6px; width: 124px"><option selected>Off</option><option>Light</option><option>Moderate</option><option>Strong</option><option>Very strong</option><option>Dominant</option></select></div>
+</div>
+<div style="background: #24272c; border: 1px solid #3a404a; border-radius: 4px; padding: 12px; display: flex; flex-direction: column; gap: 10px">
+<h2 style="margin: 0; font-size: 15px; font-weight: 600; color: #dcc86e">Results</h2>
+<div style="display: flex; flex-wrap: wrap; gap: 8px"><div style="flex: 1 1 100px; background: #1c1e22; border-radius: 4px; padding: 10px; display: flex; flex-direction: column; gap: 2px"><span style="color: #969ca8">Score</span><span style="font-size: 20px; font-weight: 600">10,356.41</span></div><div style="flex: 1 1 100px; background: #1c1e22; border-radius: 4px; padding: 10px; display: flex; flex-direction: column; gap: 2px"><span style="color: #969ca8">Best</span><span style="font-size: 20px; font-weight: 600">10,123.78</span><span style="color: #969ca8">at 558,755</span></div><div style="flex: 1 1 100px; background: #1c1e22; border-radius: 4px; padding: 10px; display: flex; flex-direction: column; gap: 2px"><span style="color: #969ca8">Time</span><span style="font-size: 20px; font-weight: 600">3:12</span></div><div style="flex: 1 1 100px; background: #1c1e22; border-radius: 4px; padding: 10px; display: flex; flex-direction: column; gap: 2px"><span style="color: #969ca8">Speed</span><span style="font-size: 20px; font-weight: 600">2,930</span><span style="color: #969ca8">iterations / s</span></div></div>
+<button type="button" style="font: inherit; border: 0; border-radius: 5px; padding: 6px 12px; background: #3a404a; color: #e8eaf0; cursor: pointer; background: #2a2e36; color: #b4b8c3; text-align: left">Run details…</button>
+</div>
+</section>
+<section aria-label="Map, run and visuals" style="flex: 3 1 480px; min-width: 0; display: flex; flex-direction: column; gap: 12px">
+<div style="background: #24272c; border: 1px solid #3a404a; border-radius: 4px; padding: 12px; display: flex; flex-direction: column; gap: 10px">
+<div style="display: flex; flex-wrap: wrap; align-items: center; gap: 12px">
+<label for="fill" style="color: #b4b8c3">Fill</label>
+<select id="fill" style="font: inherit; color: #e8eaf0; background: #343840; border: 1px solid #4e5664; border-radius: 5px; padding: 5px 8px; box-sizing: border-box"><option>Districts</option><option>Results by district</option><option>Demographics by district</option><option>Compactness</option><option>Population deviation</option></select>
+<label style="display: flex; align-items: center; gap: 5px"><input type="checkbox" checked style="margin: 0; accent-color: #7382a5">Basemap</label><label style="display: flex; align-items: center; gap: 5px"><input type="checkbox" checked style="margin: 0; accent-color: #7382a5">Cities</label><label style="display: flex; align-items: center; gap: 5px"><input type="checkbox"  style="margin: 0; accent-color: #7382a5">Precincts</label><label style="display: flex; align-items: center; gap: 5px"><input type="checkbox" checked style="margin: 0; accent-color: #7382a5">Labels</label><label style="display: flex; align-items: center; gap: 5px"><input type="checkbox"  style="margin: 0; accent-color: #7382a5">Splits</label>
+<button type="button" style="font: inherit; border: 0; border-radius: 5px; padding: 6px 12px; background: #3a404a; color: #e8eaf0; cursor: pointer; margin-left: auto">Export…</button>
+</div>
+<div style="position: relative; background: #181a1e; border-radius: 4px; padding: 12px; display: flex; justify-content: center">
+<svg role="img" aria-label="Placeholder map of four districts over a street basemap" viewBox="0 0 400 400" style="width: 100%; max-width: 520px; height: auto">
+<rect width="400" height="400" fill="#2b2f36"></rect>
+<path d="M300,250 C320,235 350,240 356,262 C362,286 338,300 318,292 C300,285 288,266 300,250 Z" fill="#33485c"></path>
+<path d="M0,330 C60,318 90,345 150,338 C210,331 230,300 290,306" fill="none" stroke="#33485c" stroke-width="5"></path>
+<g fill="none" stroke="#5b6270" stroke-width="3"><path d="M0,150 H400"></path><path d="M190,0 V400"></path><path d="M0,60 L400,340"></path></g>
+<g fill="none" stroke="#474d59" stroke-width="1.5"><path d="M0,90 H400 M0,240 H400 M0,290 H400 M80,0 V400 M130,0 V400 M260,0 V400 M330,0 V400 M0,380 L380,0"></path></g>
+<g stroke="#e8eaf0" stroke-width="2.5" stroke-linejoin="round" fill-opacity="0.45">
+<path d="M0,0 H230 L215,90 L250,150 L180,210 L120,190 L60,230 L0,215 Z" fill="#6e6ec2"></path>
+<path d="M230,0 H400 V190 L330,205 L290,170 L250,150 L215,90 Z" fill="#e7ac80"></path>
+<path d="M400,190 V400 H210 L225,320 L190,260 L180,210 L250,150 L290,170 L330,205 Z" fill="#6eb7b7"></path>
+<path d="M0,215 L60,230 L120,190 L180,210 L190,260 L225,320 L210,400 H0 Z" fill="#b9b96f"></path>
+</g>
+<g fill="none" stroke="#dcc86e" stroke-width="1.5" stroke-dasharray="5 3"><path d="M95,40 H175 V120 H95 Z"></path><path d="M250,230 H350 V330 H250 Z"></path></g>
+<g font-family="Inter, sans-serif" font-size="20" font-weight="600" fill="#e8eaf0" stroke="#1c1e22" stroke-width="4" paint-order="stroke" text-anchor="middle"><text x="60" y="150">1</text><text x="315" y="100">2</text><text x="225" y="370">3</text><text x="100" y="300">4</text></g>
+</svg>
+<div style="position: absolute; top: 12px; right: 12px; width: 220px; background: #202226; border: 1px solid #3a404a; border-radius: 6px; padding: 10px; display: flex; flex-direction: column; gap: 6px"><div style="display: flex; align-items: center; gap: 6px"><svg aria-hidden="true" viewBox="0 0 10 16" style="width: 10px; height: 16px; flex: 0 0 auto; cursor: grab"><g fill="#969ca8"><circle cx="2" cy="3" r="1.4"></circle><circle cx="8" cy="3" r="1.4"></circle><circle cx="2" cy="8" r="1.4"></circle><circle cx="8" cy="8" r="1.4"></circle><circle cx="2" cy="13" r="1.4"></circle><circle cx="8" cy="13" r="1.4"></circle></g></svg><span style="font-weight: 600; flex: 1">Likely seats</span><button type="button" aria-label="Unpin Likely seats" aria-pressed="true" style="font: inherit; border: 0; background: transparent; padding: 0 4px; border-radius: 5px; cursor: pointer"><svg aria-hidden="true" viewBox="0 0 16 16" style="width: 14px; height: 14px"><path d="M6 2h4l-1 5 3 2H4l3-2z M8 9v5" fill="#a0c8f5" stroke="#a0c8f5" stroke-width="1.4" stroke-linejoin="round" stroke-linecap="round"></path></svg></button><button type="button" aria-label="Remove Likely seats" style="font: inherit; border: 0; background: transparent; padding: 0 4px; border-radius: 5px; cursor: pointer; color: #969ca8">×</button></div><span style="color: #969ca8">Chance of each Democratic seat count</span><svg role="img" aria-label="Sample histogram of likely Democratic seats, from 0 to 4" viewBox="0 0 240 120" style="width: 100%; height: auto"><g fill="#7382a5"><rect x="14" y="92" width="34" height="6"></rect><rect x="58" y="62" width="34" height="36"></rect><rect x="102" y="20" width="34" height="78"></rect><rect x="146" y="50" width="34" height="48"></rect><rect x="190" y="88" width="34" height="10"></rect></g><path d="M8,98 H232" stroke="#3a404a"></path><g font-family="Inter, sans-serif" font-size="12" fill="#bec3cd" text-anchor="middle"><text x="31" y="114">0</text><text x="75" y="114">1</text><text x="119" y="114">2</text><text x="163" y="114">3</text><text x="207" y="114">4</text></g></svg><svg aria-hidden="true" viewBox="0 0 12 12" style="width: 12px; height: 12px; align-self: flex-end; cursor: nwse-resize"><path d="M11 3 L3 11 M11 7 L7 11" stroke="#969ca8" stroke-width="1.4" stroke-linecap="round"></path></svg></div>
+</div>
+<div style="display: flex; flex-wrap: wrap; align-items: center; gap: 14px; border-top: 1px solid #363c46; padding-top: 10px">
+<span style="font-weight: 600">Map style</span>
+<div style="display: flex; align-items: center; gap: 6px"><label for="lw0" style="color: #b4b8c3">District borders</label><input id="lw0" type="number" min="0" max="8" step="0.5" value="2.5" aria-label="District borders width in pixels" style="font: inherit; color: #e8eaf0; background: #343840; border: 1px solid #4e5664; border-radius: 5px; padding: 5px 8px; box-sizing: border-box; width: 62px; padding: 3px 6px"><input type="color" value="#e8eaf0" aria-label="District borders colour" style="width: 30px; height: 28px; padding: 0; border: 1px solid #4e5664; border-radius: 5px; background: #343840"></div><div style="display: flex; align-items: center; gap: 6px"><label for="lw1" style="color: #b4b8c3">City lines</label><input id="lw1" type="number" min="0" max="8" step="0.5" value="1.5" aria-label="City lines width in pixels" style="font: inherit; color: #e8eaf0; background: #343840; border: 1px solid #4e5664; border-radius: 5px; padding: 5px 8px; box-sizing: border-box; width: 62px; padding: 3px 6px"><input type="color" value="#dcc86e" aria-label="City lines colour" style="width: 30px; height: 28px; padding: 0; border: 1px solid #4e5664; border-radius: 5px; background: #343840"></div><div style="display: flex; align-items: center; gap: 6px"><label for="lw2" style="color: #b4b8c3">Precinct lines</label><input id="lw2" type="number" min="0" max="8" step="0.5" value="0.5" aria-label="Precinct lines width in pixels" style="font: inherit; color: #e8eaf0; background: #343840; border: 1px solid #4e5664; border-radius: 5px; padding: 5px 8px; box-sizing: border-box; width: 62px; padding: 3px 6px"><input type="color" value="#969ca8" aria-label="Precinct lines colour" style="width: 30px; height: 28px; padding: 0; border: 1px solid #4e5664; border-radius: 5px; background: #343840"></div><div style="display: flex; align-items: center; gap: 6px"><label for="fo" style="color: #b4b8c3">Fill opacity</label><input id="fo" type="range" min="0" max="100" value="45" style="width: 110px; margin: 0; accent-color: #7382a5"></div>
+</div>
+<span style="color: #969ca8">Basemap: OpenFreeMap © OpenMapTiles, data from OpenStreetMap</span>
+</div>
+<div style="background: #24272c; border: 1px solid #3a404a; border-radius: 4px; padding: 12px; display: flex; flex-direction: column; gap: 10px">
+<div style="display: flex; flex-wrap: wrap; align-items: center; gap: 12px">
+<button type="button" style="font: inherit; border: 0; border-radius: 5px; padding: 6px 12px; background: #3a404a; color: #e8eaf0; cursor: pointer; background: #5f6ea5; color: #ffffff; min-width: 90px">Pause</button>
+<button type="button" style="font: inherit; border: 0; border-radius: 5px; padding: 6px 12px; background: #3a404a; color: #e8eaf0; cursor: pointer">Reset</button>
+<button type="button" style="font: inherit; border: 0; border-radius: 5px; padding: 6px 12px; background: #3a404a; color: #e8eaf0; cursor: pointer">Revert to best</button>
+<div role="img" aria-label="Progress: 56 percent" style="flex: 1 1 200px; display: flex; gap: 3px"><span style="flex: 1 1 0; height: 14px; border-radius: 2px; background: #5f6ea5"></span><span style="flex: 1 1 0; height: 14px; border-radius: 2px; background: #5f6ea5"></span><span style="flex: 1 1 0; height: 14px; border-radius: 2px; background: #5f6ea5"></span><span style="flex: 1 1 0; height: 14px; border-radius: 2px; background: #5f6ea5"></span><span style="flex: 1 1 0; height: 14px; border-radius: 2px; background: #5f6ea5"></span><span style="flex: 1 1 0; height: 14px; border-radius: 2px; background: #5f6ea5"></span><span style="flex: 1 1 0; height: 14px; border-radius: 2px; background: #5f6ea5"></span><span style="flex: 1 1 0; height: 14px; border-radius: 2px; background: #5f6ea5"></span><span style="flex: 1 1 0; height: 14px; border-radius: 2px; background: #5f6ea5"></span><span style="flex: 1 1 0; height: 14px; border-radius: 2px; background: #5f6ea5"></span><span style="flex: 1 1 0; height: 14px; border-radius: 2px; background: #5f6ea5"></span><span style="flex: 1 1 0; height: 14px; border-radius: 2px; background: #343840"></span><span style="flex: 1 1 0; height: 14px; border-radius: 2px; background: #343840"></span><span style="flex: 1 1 0; height: 14px; border-radius: 2px; background: #343840"></span><span style="flex: 1 1 0; height: 14px; border-radius: 2px; background: #343840"></span><span style="flex: 1 1 0; height: 14px; border-radius: 2px; background: #343840"></span><span style="flex: 1 1 0; height: 14px; border-radius: 2px; background: #343840"></span><span style="flex: 1 1 0; height: 14px; border-radius: 2px; background: #343840"></span><span style="flex: 1 1 0; height: 14px; border-radius: 2px; background: #343840"></span><span style="flex: 1 1 0; height: 14px; border-radius: 2px; background: #343840"></span></div>
+<span>563,890 / 1,000,000</span>
+<span style="font-weight: 600">2:28 left</span>
+</div>
+</div>
+<div style="background: #24272c; border: 1px solid #3a404a; border-radius: 4px; padding: 12px; display: flex; flex-direction: column; gap: 10px">
+<div style="display: flex; justify-content: space-between; align-items: center; gap: 8px"><h2 style="margin: 0; font-size: 15px; font-weight: 600; color: #dcc86e">Visuals</h2><button type="button" style="font: inherit; border: 0; border-radius: 5px; padding: 6px 12px; background: #3a404a; color: #e8eaf0; cursor: pointer">Add visual…</button></div>
+<div style="display: flex; flex-wrap: wrap; gap: 8px"><div style="flex: 1 1 240px; min-width: 0; background: #1c1e22; border-radius: 4px; padding: 10px; display: flex; flex-direction: column; gap: 6px"><div style="display: flex; align-items: center; gap: 6px"><svg aria-hidden="true" viewBox="0 0 10 16" style="width: 10px; height: 16px; flex: 0 0 auto; cursor: grab"><g fill="#969ca8"><circle cx="2" cy="3" r="1.4"></circle><circle cx="8" cy="3" r="1.4"></circle><circle cx="2" cy="8" r="1.4"></circle><circle cx="8" cy="8" r="1.4"></circle><circle cx="2" cy="13" r="1.4"></circle><circle cx="8" cy="13" r="1.4"></circle></g></svg><span style="font-weight: 600; flex: 1">Districts by party share</span><button type="button" aria-label="Pin Districts by party share" aria-pressed="false" style="font: inherit; border: 0; background: transparent; padding: 0 4px; border-radius: 5px; cursor: pointer"><svg aria-hidden="true" viewBox="0 0 16 16" style="width: 14px; height: 14px"><path d="M6 2h4l-1 5 3 2H4l3-2z M8 9v5" fill="none" stroke="#969ca8" stroke-width="1.4" stroke-linejoin="round" stroke-linecap="round"></path></svg></button><button type="button" aria-label="Remove Districts by party share" style="font: inherit; border: 0; background: transparent; padding: 0 4px; border-radius: 5px; cursor: pointer; color: #969ca8">×</button></div><span style="color: #969ca8">Democratic two-party share</span><svg role="img" aria-label="Sample chart of districts ordered by Democratic share with a 50 percent line" viewBox="0 0 240 120" style="width: 100%; height: auto"><path d="M8,58 H232" stroke="#bec3cd" stroke-dasharray="4 4"></path><rect x="24" y="68" width="36" height="30" fill="#ea857a"></rect><rect x="76" y="50" width="36" height="48" fill="#a6bbf6"></rect><rect x="128" y="46" width="36" height="52" fill="#7f9ff1"></rect><rect x="180" y="40" width="36" height="58" fill="#5283f0"></rect><path d="M8,98 H232" stroke="#3a404a"></path><g font-family="Inter, sans-serif" font-size="12" fill="#bec3cd" text-anchor="middle"><text x="42" y="114">4</text><text x="94" y="114">1</text><text x="146" y="114">2</text><text x="198" y="114">3</text></g></svg><svg aria-hidden="true" viewBox="0 0 12 12" style="width: 12px; height: 12px; align-self: flex-end; cursor: nwse-resize"><path d="M11 3 L3 11 M11 7 L7 11" stroke="#969ca8" stroke-width="1.4" stroke-linecap="round"></path></svg></div><div style="flex: 1 1 240px; min-width: 0; background: #1c1e22; border-radius: 4px; padding: 10px; display: flex; flex-direction: column; gap: 6px"><div style="display: flex; align-items: center; gap: 6px"><svg aria-hidden="true" viewBox="0 0 10 16" style="width: 10px; height: 16px; flex: 0 0 auto; cursor: grab"><g fill="#969ca8"><circle cx="2" cy="3" r="1.4"></circle><circle cx="8" cy="3" r="1.4"></circle><circle cx="2" cy="8" r="1.4"></circle><circle cx="8" cy="8" r="1.4"></circle><circle cx="2" cy="13" r="1.4"></circle><circle cx="8" cy="13" r="1.4"></circle></g></svg><span style="font-weight: 600; flex: 1">Score</span><button type="button" aria-label="Pin Score" aria-pressed="false" style="font: inherit; border: 0; background: transparent; padding: 0 4px; border-radius: 5px; cursor: pointer"><svg aria-hidden="true" viewBox="0 0 16 16" style="width: 14px; height: 14px"><path d="M6 2h4l-1 5 3 2H4l3-2z M8 9v5" fill="none" stroke="#969ca8" stroke-width="1.4" stroke-linejoin="round" stroke-linecap="round"></path></svg></button><button type="button" aria-label="Remove Score" style="font: inherit; border: 0; background: transparent; padding: 0 4px; border-radius: 5px; cursor: pointer; color: #969ca8">×</button></div><span style="color: #969ca8">Weighted total over the run</span><svg role="img" aria-label="Score over recent iterations, between about 10,200 and 10,600" viewBox="0 0 240 120" style="width: 100%; height: auto"><g stroke="#323740"><path d="M44,20 H232 M44,54 H232 M44,88 H232"></path></g><g font-family="Inter, sans-serif" font-size="12" fill="#bec3cd"><text x="2" y="24">10,600</text><text x="2" y="58">10,400</text><text x="2" y="92">10,200</text></g><path d="M44,74 L58,54 L70,62 L84,50 L96,60 L110,66 L122,52 L136,68 L148,58 L162,30 L174,24 L186,48 L198,56 L210,42 L222,60 L232,70" fill="none" stroke="#7382a5" stroke-width="2"></path></svg><svg aria-hidden="true" viewBox="0 0 12 12" style="width: 12px; height: 12px; align-self: flex-end; cursor: nwse-resize"><path d="M11 3 L3 11 M11 7 L7 11" stroke="#969ca8" stroke-width="1.4" stroke-linecap="round"></path></svg></div></div>
+<span style="color: #969ca8">Drag a visual by its handle to move it anywhere. Drag a corner to resize. Pin it to keep it where it is.</span>
+</div>
+</section>
+<section aria-label="Scores" style="flex: 2 1 400px; max-width: 500px; min-width: 0; display: flex; flex-direction: column; gap: 12px">
+<div style="background: #24272c; border: 1px solid #3a404a; border-radius: 4px; padding: 12px; display: flex; flex-direction: column; gap: 10px; gap: 0">
+<div style="display: flex; justify-content: space-between; align-items: center; gap: 8px; padding-bottom: 6px"><h2 style="margin: 0; font-size: 15px; font-weight: 600; color: #dcc86e">Scores</h2><span style="color: #969ca8">6 of 20 on</span></div>
+<h3 style="margin: 6px 0 0; font-size: 14px; font-weight: 600; color: #b4b8c3">Geography and population</h3><div style="display: flex; align-items: flex-start; gap: 8px; border-top: 1px solid #363c46; padding: 5px 0">
+<input type="checkbox" checked aria-label="Use Compactness" style="margin: 3px 0 0; accent-color: #7382a5">
+<details open style="flex: 1; min-width: 0">
+<summary style="cursor: pointer; display: flex; align-items: baseline; gap: 8px"><span style="flex: 0 0 auto; color: #6edc6e">Compactness</span><span style="flex: 1; min-width: 0; color: #969ca8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">Less stretched, less irregular shapes</span><span style="flex: 0 0 auto; color: #e8eaf0">50</span></summary>
+<div style="padding: 8px 0 4px; display: flex; flex-wrap: wrap; align-items: center; gap: 10px">
+<label for="w1" style="color: #b4b8c3">Weight</label><input id="w1" type="range" min="0" max="100" value="50" style="flex: 1 1 140px; margin: 0; accent-color: #7382a5"><input type="number" value="50" aria-label="Compactness weight" style="font: inherit; color: #e8eaf0; background: #343840; border: 1px solid #4e5664; border-radius: 5px; padding: 5px 8px; box-sizing: border-box; width: 64px; padding: 3px 6px">
+
+<button type="button" style="font: inherit; border: 0; border-radius: 5px; padding: 6px 12px; background: #3a404a; color: #e8eaf0; cursor: pointer; padding: 3px 10px">Open chart</button>
+</div>
+</details>
+</div><div style="display: flex; align-items: flex-start; gap: 8px; border-top: 1px solid #363c46; padding: 5px 0">
+<input type="checkbox"  aria-label="Use Polsby-Popper" style="margin: 3px 0 0; accent-color: #7382a5">
+<details  style="flex: 1; min-width: 0">
+<summary style="cursor: pointer; display: flex; align-items: baseline; gap: 8px"><span style="flex: 0 0 auto; color: #e8eaf0">Polsby-Popper</span><span style="flex: 1; min-width: 0; color: #969ca8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">Shape: area against perimeter</span><span style="flex: 0 0 auto; color: #969ca8">off</span></summary>
+<div style="padding: 8px 0 4px; display: flex; flex-wrap: wrap; align-items: center; gap: 10px">
+<label for="w2" style="color: #b4b8c3">Weight</label><input id="w2" type="range" min="0" max="100" value="0" style="flex: 1 1 140px; margin: 0; accent-color: #7382a5"><input type="number" value="0" aria-label="Polsby-Popper weight" style="font: inherit; color: #e8eaf0; background: #343840; border: 1px solid #4e5664; border-radius: 5px; padding: 5px 8px; box-sizing: border-box; width: 64px; padding: 3px 6px">
+
+<button type="button" style="font: inherit; border: 0; border-radius: 5px; padding: 6px 12px; background: #3a404a; color: #e8eaf0; cursor: pointer; padding: 3px 10px">Open chart</button>
+</div>
+</details>
+</div><div style="display: flex; align-items: flex-start; gap: 8px; border-top: 1px solid #363c46; padding: 5px 0">
+<input type="checkbox"  aria-label="Use Reock" style="margin: 3px 0 0; accent-color: #7382a5">
+<details  style="flex: 1; min-width: 0">
+<summary style="cursor: pointer; display: flex; align-items: baseline; gap: 8px"><span style="flex: 0 0 auto; color: #e8eaf0">Reock</span><span style="flex: 1; min-width: 0; color: #969ca8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">Shape: area against bounding circle</span><span style="flex: 0 0 auto; color: #969ca8">off</span></summary>
+<div style="padding: 8px 0 4px; display: flex; flex-wrap: wrap; align-items: center; gap: 10px">
+<label for="w3" style="color: #b4b8c3">Weight</label><input id="w3" type="range" min="0" max="100" value="0" style="flex: 1 1 140px; margin: 0; accent-color: #7382a5"><input type="number" value="0" aria-label="Reock weight" style="font: inherit; color: #e8eaf0; background: #343840; border: 1px solid #4e5664; border-radius: 5px; padding: 5px 8px; box-sizing: border-box; width: 64px; padding: 3px 6px">
+
+<button type="button" style="font: inherit; border: 0; border-radius: 5px; padding: 6px 12px; background: #3a404a; color: #e8eaf0; cursor: pointer; padding: 3px 10px">Open chart</button>
+</div>
+</details>
+</div><div style="display: flex; align-items: flex-start; gap: 8px; border-top: 1px solid #363c46; padding: 5px 0">
+<input type="checkbox"  aria-label="Use Cut Edges" style="margin: 3px 0 0; accent-color: #7382a5">
+<details  style="flex: 1; min-width: 0">
+<summary style="cursor: pointer; display: flex; align-items: baseline; gap: 8px"><span style="flex: 0 0 auto; color: #e8eaf0">Cut Edges</span><span style="flex: 1; min-width: 0; color: #969ca8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">Fewer neighboring precincts split apart</span><span style="flex: 0 0 auto; color: #969ca8">off</span></summary>
+<div style="padding: 8px 0 4px; display: flex; flex-wrap: wrap; align-items: center; gap: 10px">
+<label for="w4" style="color: #b4b8c3">Weight</label><input id="w4" type="range" min="0" max="100" value="0" style="flex: 1 1 140px; margin: 0; accent-color: #7382a5"><input type="number" value="0" aria-label="Cut Edges weight" style="font: inherit; color: #e8eaf0; background: #343840; border: 1px solid #4e5664; border-radius: 5px; padding: 5px 8px; box-sizing: border-box; width: 64px; padding: 3px 6px">
+
+<button type="button" style="font: inherit; border: 0; border-radius: 5px; padding: 6px 12px; background: #3a404a; color: #e8eaf0; cursor: pointer; padding: 3px 10px">Open chart</button>
+</div>
+</details>
+</div><div style="display: flex; align-items: flex-start; gap: 8px; border-top: 1px solid #363c46; padding: 5px 0">
+<input type="checkbox" checked aria-label="Use County Congruence" style="margin: 3px 0 0; accent-color: #7382a5">
+<details  style="flex: 1; min-width: 0">
+<summary style="cursor: pointer; display: flex; align-items: baseline; gap: 8px"><span style="flex: 0 0 auto; color: #6edc6e">County Congruence</span><span style="flex: 1; min-width: 0; color: #969ca8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">Keeps cities together</span><span style="flex: 0 0 auto; color: #e8eaf0">6</span></summary>
+<div style="padding: 8px 0 4px; display: flex; flex-wrap: wrap; align-items: center; gap: 10px">
+<label for="w5" style="color: #b4b8c3">Weight</label><input id="w5" type="range" min="0" max="100" value="6" style="flex: 1 1 140px; margin: 0; accent-color: #7382a5"><input type="number" value="6" aria-label="County Congruence weight" style="font: inherit; color: #e8eaf0; background: #343840; border: 1px solid #4e5664; border-radius: 5px; padding: 5px 8px; box-sizing: border-box; width: 64px; padding: 3px 6px">
+
+<button type="button" style="font: inherit; border: 0; border-radius: 5px; padding: 6px 12px; background: #3a404a; color: #e8eaf0; cursor: pointer; padding: 3px 10px">Open chart</button>
+</div>
+</details>
+</div><div style="display: flex; align-items: flex-start; gap: 8px; border-top: 1px solid #363c46; padding: 5px 0">
+<input type="checkbox"  aria-label="Use Classic Splitting" style="margin: 3px 0 0; accent-color: #7382a5">
+<details  style="flex: 1; min-width: 0">
+<summary style="cursor: pointer; display: flex; align-items: baseline; gap: 8px"><span style="flex: 0 0 auto; color: #e8eaf0">Classic Splitting</span><span style="flex: 1; min-width: 0; color: #969ca8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">Count-based limit on splits</span><span style="flex: 0 0 auto; color: #969ca8">off</span></summary>
+<div style="padding: 8px 0 4px; display: flex; flex-wrap: wrap; align-items: center; gap: 10px">
+<label for="w6" style="color: #b4b8c3">Weight</label><input id="w6" type="range" min="0" max="100" value="0" style="flex: 1 1 140px; margin: 0; accent-color: #7382a5"><input type="number" value="0" aria-label="Classic Splitting weight" style="font: inherit; color: #e8eaf0; background: #343840; border: 1px solid #4e5664; border-radius: 5px; padding: 5px 8px; box-sizing: border-box; width: 64px; padding: 3px 6px">
+
+<button type="button" style="font: inherit; border: 0; border-radius: 5px; padding: 6px 12px; background: #3a404a; color: #e8eaf0; cursor: pointer; padding: 3px 10px">Open chart</button>
+</div>
+</details>
+</div><div style="display: flex; align-items: flex-start; gap: 8px; border-top: 1px solid #363c46; padding: 5px 0">
+<input type="checkbox" checked aria-label="Use Population Deviation" style="margin: 3px 0 0; accent-color: #7382a5">
+<details  style="flex: 1; min-width: 0">
+<summary style="cursor: pointer; display: flex; align-items: baseline; gap: 8px"><span style="flex: 0 0 auto; color: #6edc6e">Population Deviation</span><span style="flex: 1; min-width: 0; color: #969ca8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">Populations closer to the ideal</span><span style="flex: 0 0 auto; color: #e8eaf0">23</span></summary>
+<div style="padding: 8px 0 4px; display: flex; flex-wrap: wrap; align-items: center; gap: 10px">
+<label for="w7" style="color: #b4b8c3">Weight</label><input id="w7" type="range" min="0" max="100" value="23" style="flex: 1 1 140px; margin: 0; accent-color: #7382a5"><input type="number" value="23" aria-label="Population Deviation weight" style="font: inherit; color: #e8eaf0; background: #343840; border: 1px solid #4e5664; border-radius: 5px; padding: 5px 8px; box-sizing: border-box; width: 64px; padding: 3px 6px">
+
+<button type="button" style="font: inherit; border: 0; border-radius: 5px; padding: 6px 12px; background: #3a404a; color: #e8eaf0; cursor: pointer; padding: 3px 10px">Open chart</button>
+</div>
+</details>
+</div><div style="display: flex; align-items: flex-start; gap: 8px; border-top: 1px solid #363c46; padding: 5px 0">
+<input type="checkbox"  aria-label="Use Plan Continuity" style="margin: 3px 0 0; accent-color: #7382a5">
+<details  style="flex: 1; min-width: 0">
+<summary style="cursor: pointer; display: flex; align-items: baseline; gap: 8px"><span style="flex: 0 0 auto; color: #e8eaf0">Plan Continuity</span><span style="flex: 1; min-width: 0; color: #969ca8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">Needs a reference plan</span><span style="flex: 0 0 auto; color: #969ca8">off</span></summary>
+<div style="padding: 8px 0 4px; display: flex; flex-wrap: wrap; align-items: center; gap: 10px">
+<label for="w8" style="color: #b4b8c3">Weight</label><input id="w8" type="range" min="0" max="100" value="0" style="flex: 1 1 140px; margin: 0; accent-color: #7382a5"><input type="number" value="0" aria-label="Plan Continuity weight" style="font: inherit; color: #e8eaf0; background: #343840; border: 1px solid #4e5664; border-radius: 5px; padding: 5px 8px; box-sizing: border-box; width: 64px; padding: 3px 6px">
+
+<button type="button" style="font: inherit; border: 0; border-radius: 5px; padding: 6px 12px; background: #3a404a; color: #e8eaf0; cursor: pointer; padding: 3px 10px">Open chart</button>
+</div>
+</details>
+</div><h3 style="margin: 6px 0 0; font-size: 14px; font-weight: 600; color: #b4b8c3">Elections</h3><div style="display: flex; align-items: flex-start; gap: 8px; border-top: 1px solid #363c46; padding: 5px 0">
+<input type="checkbox"  aria-label="Use Mean-Median" style="margin: 3px 0 0; accent-color: #7382a5">
+<details  style="flex: 1; min-width: 0">
+<summary style="cursor: pointer; display: flex; align-items: baseline; gap: 8px"><span style="flex: 0 0 auto; color: #e8eaf0">Mean-Median</span><span style="flex: 1; min-width: 0; color: #969ca8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">Partisan asymmetry: median against mean</span><span style="flex: 0 0 auto; color: #969ca8">off</span></summary>
+<div style="padding: 8px 0 4px; display: flex; flex-wrap: wrap; align-items: center; gap: 10px">
+<label for="w9" style="color: #b4b8c3">Weight</label><input id="w9" type="range" min="0" max="100" value="0" style="flex: 1 1 140px; margin: 0; accent-color: #7382a5"><input type="number" value="0" aria-label="Mean-Median weight" style="font: inherit; color: #e8eaf0; background: #343840; border: 1px solid #4e5664; border-radius: 5px; padding: 5px 8px; box-sizing: border-box; width: 64px; padding: 3px 6px">
+<fieldset style="border: 0; margin: 0; padding: 0; display: flex; gap: 10px"><legend style="float: left; padding: 0 10px 0 0; color: #b4b8c3">Aim</legend><label><input type="radio" name="d9" checked style="accent-color: #7382a5"> Fair</label><label><input type="radio" name="d9" style="accent-color: #7382a5"> D</label><label><input type="radio" name="d9" style="accent-color: #7382a5"> R</label></fieldset>
+<button type="button" style="font: inherit; border: 0; border-radius: 5px; padding: 6px 12px; background: #3a404a; color: #e8eaf0; cursor: pointer; padding: 3px 10px">Open chart</button>
+</div>
+</details>
+</div><div style="display: flex; align-items: flex-start; gap: 8px; border-top: 1px solid #363c46; padding: 5px 0">
+<input type="checkbox"  aria-label="Use Efficiency Gap" style="margin: 3px 0 0; accent-color: #7382a5">
+<details  style="flex: 1; min-width: 0">
+<summary style="cursor: pointer; display: flex; align-items: baseline; gap: 8px"><span style="flex: 0 0 auto; color: #e8eaf0">Efficiency Gap</span><span style="flex: 1; min-width: 0; color: #969ca8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">Partisan asymmetry: wasted votes</span><span style="flex: 0 0 auto; color: #969ca8">off</span></summary>
+<div style="padding: 8px 0 4px; display: flex; flex-wrap: wrap; align-items: center; gap: 10px">
+<label for="w10" style="color: #b4b8c3">Weight</label><input id="w10" type="range" min="0" max="100" value="0" style="flex: 1 1 140px; margin: 0; accent-color: #7382a5"><input type="number" value="0" aria-label="Efficiency Gap weight" style="font: inherit; color: #e8eaf0; background: #343840; border: 1px solid #4e5664; border-radius: 5px; padding: 5px 8px; box-sizing: border-box; width: 64px; padding: 3px 6px">
+<fieldset style="border: 0; margin: 0; padding: 0; display: flex; gap: 10px"><legend style="float: left; padding: 0 10px 0 0; color: #b4b8c3">Aim</legend><label><input type="radio" name="d10" checked style="accent-color: #7382a5"> Fair</label><label><input type="radio" name="d10" style="accent-color: #7382a5"> D</label><label><input type="radio" name="d10" style="accent-color: #7382a5"> R</label></fieldset>
+<button type="button" style="font: inherit; border: 0; border-radius: 5px; padding: 6px 12px; background: #3a404a; color: #e8eaf0; cursor: pointer; padding: 3px 10px">Open chart</button>
+</div>
+</details>
+</div><div style="display: flex; align-items: flex-start; gap: 8px; border-top: 1px solid #363c46; padding: 5px 0">
+<input type="checkbox"  aria-label="Use Partisan Bias" style="margin: 3px 0 0; accent-color: #7382a5">
+<details  style="flex: 1; min-width: 0">
+<summary style="cursor: pointer; display: flex; align-items: baseline; gap: 8px"><span style="flex: 0 0 auto; color: #e8eaf0">Partisan Bias</span><span style="flex: 1; min-width: 0; color: #969ca8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">Partisan asymmetry: seats at an even vote</span><span style="flex: 0 0 auto; color: #969ca8">off</span></summary>
+<div style="padding: 8px 0 4px; display: flex; flex-wrap: wrap; align-items: center; gap: 10px">
+<label for="w11" style="color: #b4b8c3">Weight</label><input id="w11" type="range" min="0" max="100" value="0" style="flex: 1 1 140px; margin: 0; accent-color: #7382a5"><input type="number" value="0" aria-label="Partisan Bias weight" style="font: inherit; color: #e8eaf0; background: #343840; border: 1px solid #4e5664; border-radius: 5px; padding: 5px 8px; box-sizing: border-box; width: 64px; padding: 3px 6px">
+<fieldset style="border: 0; margin: 0; padding: 0; display: flex; gap: 10px"><legend style="float: left; padding: 0 10px 0 0; color: #b4b8c3">Aim</legend><label><input type="radio" name="d11" checked style="accent-color: #7382a5"> Fair</label><label><input type="radio" name="d11" style="accent-color: #7382a5"> D</label><label><input type="radio" name="d11" style="accent-color: #7382a5"> R</label></fieldset>
+<button type="button" style="font: inherit; border: 0; border-radius: 5px; padding: 6px 12px; background: #3a404a; color: #e8eaf0; cursor: pointer; padding: 3px 10px">Open chart</button>
+</div>
+</details>
+</div><div style="display: flex; align-items: flex-start; gap: 8px; border-top: 1px solid #363c46; padding: 5px 0">
+<input type="checkbox"  aria-label="Use Partisan Gini" style="margin: 3px 0 0; accent-color: #7382a5">
+<details  style="flex: 1; min-width: 0">
+<summary style="cursor: pointer; display: flex; align-items: baseline; gap: 8px"><span style="flex: 0 0 auto; color: #e8eaf0">Partisan Gini</span><span style="flex: 1; min-width: 0; color: #969ca8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">Partisan asymmetry across all vote levels</span><span style="flex: 0 0 auto; color: #969ca8">off</span></summary>
+<div style="padding: 8px 0 4px; display: flex; flex-wrap: wrap; align-items: center; gap: 10px">
+<label for="w12" style="color: #b4b8c3">Weight</label><input id="w12" type="range" min="0" max="100" value="0" style="flex: 1 1 140px; margin: 0; accent-color: #7382a5"><input type="number" value="0" aria-label="Partisan Gini weight" style="font: inherit; color: #e8eaf0; background: #343840; border: 1px solid #4e5664; border-radius: 5px; padding: 5px 8px; box-sizing: border-box; width: 64px; padding: 3px 6px">
+
+<button type="button" style="font: inherit; border: 0; border-radius: 5px; padding: 6px 12px; background: #3a404a; color: #e8eaf0; cursor: pointer; padding: 3px 10px">Open chart</button>
+</div>
+</details>
+</div><div style="display: flex; align-items: flex-start; gap: 8px; border-top: 1px solid #363c46; padding: 5px 0">
+<input type="checkbox"  aria-label="Use Proportionality" style="margin: 3px 0 0; accent-color: #7382a5">
+<details  style="flex: 1; min-width: 0">
+<summary style="cursor: pointer; display: flex; align-items: baseline; gap: 8px"><span style="flex: 0 0 auto; color: #e8eaf0">Proportionality</span><span style="flex: 1; min-width: 0; color: #969ca8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">Seat balance matches vote balance</span><span style="flex: 0 0 auto; color: #969ca8">off</span></summary>
+<div style="padding: 8px 0 4px; display: flex; flex-wrap: wrap; align-items: center; gap: 10px">
+<label for="w13" style="color: #b4b8c3">Weight</label><input id="w13" type="range" min="0" max="100" value="0" style="flex: 1 1 140px; margin: 0; accent-color: #7382a5"><input type="number" value="0" aria-label="Proportionality weight" style="font: inherit; color: #e8eaf0; background: #343840; border: 1px solid #4e5664; border-radius: 5px; padding: 5px 8px; box-sizing: border-box; width: 64px; padding: 3px 6px">
+
+<button type="button" style="font: inherit; border: 0; border-radius: 5px; padding: 6px 12px; background: #3a404a; color: #e8eaf0; cursor: pointer; padding: 3px 10px">Open chart</button>
+</div>
+</details>
+</div><div style="display: flex; align-items: flex-start; gap: 8px; border-top: 1px solid #363c46; padding: 5px 0">
+<input type="checkbox"  aria-label="Use Competitiveness" style="margin: 3px 0 0; accent-color: #7382a5">
+<details  style="flex: 1; min-width: 0">
+<summary style="cursor: pointer; display: flex; align-items: baseline; gap: 8px"><span style="flex: 0 0 auto; color: #e8eaf0">Competitiveness</span><span style="flex: 1; min-width: 0; color: #969ca8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">Less certain election outcomes</span><span style="flex: 0 0 auto; color: #969ca8">off</span></summary>
+<div style="padding: 8px 0 4px; display: flex; flex-wrap: wrap; align-items: center; gap: 10px">
+<label for="w14" style="color: #b4b8c3">Weight</label><input id="w14" type="range" min="0" max="100" value="0" style="flex: 1 1 140px; margin: 0; accent-color: #7382a5"><input type="number" value="0" aria-label="Competitiveness weight" style="font: inherit; color: #e8eaf0; background: #343840; border: 1px solid #4e5664; border-radius: 5px; padding: 5px 8px; box-sizing: border-box; width: 64px; padding: 3px 6px">
+
+<button type="button" style="font: inherit; border: 0; border-radius: 5px; padding: 6px 12px; background: #3a404a; color: #e8eaf0; cursor: pointer; padding: 3px 10px">Open chart</button>
+</div>
+</details>
+</div><div style="display: flex; align-items: flex-start; gap: 8px; border-top: 1px solid #363c46; padding: 5px 0">
+<input type="checkbox"  aria-label="Use Expected Dem Seats" style="margin: 3px 0 0; accent-color: #7382a5">
+<details  style="flex: 1; min-width: 0">
+<summary style="cursor: pointer; display: flex; align-items: baseline; gap: 8px"><span style="flex: 0 0 auto; color: #e8eaf0">Expected Dem Seats</span><span style="flex: 1; min-width: 0; color: #969ca8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">Moves expected Democratic seats up or down</span><span style="flex: 0 0 auto; color: #969ca8">off</span></summary>
+<div style="padding: 8px 0 4px; display: flex; flex-wrap: wrap; align-items: center; gap: 10px">
+<label for="w15" style="color: #b4b8c3">Weight</label><input id="w15" type="range" min="0" max="100" value="0" style="flex: 1 1 140px; margin: 0; accent-color: #7382a5"><input type="number" value="0" aria-label="Expected Dem Seats weight" style="font: inherit; color: #e8eaf0; background: #343840; border: 1px solid #4e5664; border-radius: 5px; padding: 5px 8px; box-sizing: border-box; width: 64px; padding: 3px 6px">
+
+<button type="button" style="font: inherit; border: 0; border-radius: 5px; padding: 6px 12px; background: #3a404a; color: #e8eaf0; cursor: pointer; padding: 3px 10px">Open chart</button>
+</div>
+</details>
+</div><div style="display: flex; align-items: flex-start; gap: 8px; border-top: 1px solid #363c46; padding: 5px 0">
+<input type="checkbox"  aria-label="Use Chance of Majority" style="margin: 3px 0 0; accent-color: #7382a5">
+<details  style="flex: 1; min-width: 0">
+<summary style="cursor: pointer; display: flex; align-items: baseline; gap: 8px"><span style="flex: 0 0 auto; color: #e8eaf0">Chance of Majority</span><span style="flex: 1; min-width: 0; color: #969ca8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">Chance a party wins most districts</span><span style="flex: 0 0 auto; color: #969ca8">off</span></summary>
+<div style="padding: 8px 0 4px; display: flex; flex-wrap: wrap; align-items: center; gap: 10px">
+<label for="w16" style="color: #b4b8c3">Weight</label><input id="w16" type="range" min="0" max="100" value="0" style="flex: 1 1 140px; margin: 0; accent-color: #7382a5"><input type="number" value="0" aria-label="Chance of Majority weight" style="font: inherit; color: #e8eaf0; background: #343840; border: 1px solid #4e5664; border-radius: 5px; padding: 5px 8px; box-sizing: border-box; width: 64px; padding: 3px 6px">
+
+<button type="button" style="font: inherit; border: 0; border-radius: 5px; padding: 6px 12px; background: #3a404a; color: #e8eaf0; cursor: pointer; padding: 3px 10px">Open chart</button>
+</div>
+</details>
+</div><div style="display: flex; align-items: flex-start; gap: 8px; border-top: 1px solid #363c46; padding: 5px 0">
+<input type="checkbox"  aria-label="Use Supermajority / Hinge" style="margin: 3px 0 0; accent-color: #7382a5">
+<details  style="flex: 1; min-width: 0">
+<summary style="cursor: pointer; display: flex; align-items: baseline; gap: 8px"><span style="flex: 0 0 auto; color: #e8eaf0">Supermajority / Hinge</span><span style="flex: 1; min-width: 0; color: #969ca8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">Chance a party reaches a seat target</span><span style="flex: 0 0 auto; color: #969ca8">off</span></summary>
+<div style="padding: 8px 0 4px; display: flex; flex-wrap: wrap; align-items: center; gap: 10px">
+<label for="w17" style="color: #b4b8c3">Weight</label><input id="w17" type="range" min="0" max="100" value="0" style="flex: 1 1 140px; margin: 0; accent-color: #7382a5"><input type="number" value="0" aria-label="Supermajority / Hinge weight" style="font: inherit; color: #e8eaf0; background: #343840; border: 1px solid #4e5664; border-radius: 5px; padding: 5px 8px; box-sizing: border-box; width: 64px; padding: 3px 6px">
+
+<button type="button" style="font: inherit; border: 0; border-radius: 5px; padding: 6px 12px; background: #3a404a; color: #e8eaf0; cursor: pointer; padding: 3px 10px">Open chart</button>
+</div>
+</details>
+</div><h3 style="margin: 6px 0 0; font-size: 14px; font-weight: 600; color: #b4b8c3">Demographics</h3><div style="display: flex; align-items: flex-start; gap: 8px; border-top: 1px solid #363c46; padding: 5px 0">
+<input type="checkbox" checked aria-label="Use Electoral Opportunity" style="margin: 3px 0 0; accent-color: #7382a5">
+<details  style="flex: 1; min-width: 0">
+<summary style="cursor: pointer; display: flex; align-items: baseline; gap: 8px"><span style="flex: 0 0 auto; color: #6edc6e">Electoral Opportunity</span><span style="flex: 1; min-width: 0; color: #969ca8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">Group shares as a proxy for opportunity</span><span style="flex: 0 0 auto; color: #e8eaf0">4</span></summary>
+<div style="padding: 8px 0 4px; display: flex; flex-wrap: wrap; align-items: center; gap: 10px">
+<label for="w18" style="color: #b4b8c3">Weight</label><input id="w18" type="range" min="0" max="100" value="4" style="flex: 1 1 140px; margin: 0; accent-color: #7382a5"><input type="number" value="4" aria-label="Electoral Opportunity weight" style="font: inherit; color: #e8eaf0; background: #343840; border: 1px solid #4e5664; border-radius: 5px; padding: 5px 8px; box-sizing: border-box; width: 64px; padding: 3px 6px">
+
+<button type="button" style="font: inherit; border: 0; border-radius: 5px; padding: 6px 12px; background: #3a404a; color: #e8eaf0; cursor: pointer; padding: 3px 10px">Open chart</button>
+</div>
+</details>
+</div><div style="display: flex; align-items: flex-start; gap: 8px; border-top: 1px solid #363c46; padding: 5px 0">
+<input type="checkbox" checked aria-label="Use Neighborhood Severance" style="margin: 3px 0 0; accent-color: #7382a5">
+<details  style="flex: 1; min-width: 0">
+<summary style="cursor: pointer; display: flex; align-items: baseline; gap: 8px"><span style="flex: 0 0 auto; color: #6edc6e">Neighborhood Severance</span><span style="flex: 1; min-width: 0; color: #969ca8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">Avoids cutting through concentrated areas</span><span style="flex: 0 0 auto; color: #e8eaf0">2</span></summary>
+<div style="padding: 8px 0 4px; display: flex; flex-wrap: wrap; align-items: center; gap: 10px">
+<label for="w19" style="color: #b4b8c3">Weight</label><input id="w19" type="range" min="0" max="100" value="2" style="flex: 1 1 140px; margin: 0; accent-color: #7382a5"><input type="number" value="2" aria-label="Neighborhood Severance weight" style="font: inherit; color: #e8eaf0; background: #343840; border: 1px solid #4e5664; border-radius: 5px; padding: 5px 8px; box-sizing: border-box; width: 64px; padding: 3px 6px">
+
+<button type="button" style="font: inherit; border: 0; border-radius: 5px; padding: 6px 12px; background: #3a404a; color: #e8eaf0; cursor: pointer; padding: 3px 10px">Open chart</button>
+</div>
+</details>
+</div><div style="display: flex; align-items: flex-start; gap: 8px; border-top: 1px solid #363c46; padding: 5px 0">
+<input type="checkbox" checked aria-label="Use Community Dispersion" style="margin: 3px 0 0; accent-color: #7382a5">
+<details  style="flex: 1; min-width: 0">
+<summary style="cursor: pointer; display: flex; align-items: baseline; gap: 8px"><span style="flex: 0 0 auto; color: #6edc6e">Community Dispersion</span><span style="flex: 1; min-width: 0; color: #969ca8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">Avoids spreading a community too thin</span><span style="flex: 0 0 auto; color: #e8eaf0">2</span></summary>
+<div style="padding: 8px 0 4px; display: flex; flex-wrap: wrap; align-items: center; gap: 10px">
+<label for="w20" style="color: #b4b8c3">Weight</label><input id="w20" type="range" min="0" max="100" value="2" style="flex: 1 1 140px; margin: 0; accent-color: #7382a5"><input type="number" value="2" aria-label="Community Dispersion weight" style="font: inherit; color: #e8eaf0; background: #343840; border: 1px solid #4e5664; border-radius: 5px; padding: 5px 8px; box-sizing: border-box; width: 64px; padding: 3px 6px">
+
+<button type="button" style="font: inherit; border: 0; border-radius: 5px; padding: 6px 12px; background: #3a404a; color: #e8eaf0; cursor: pointer; padding: 3px 10px">Open chart</button>
+</div>
+</details>
+</div>
+</div>
+</section>
+</main>
+</div>
+</body>
+</html>

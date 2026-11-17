@@ -18,54 +18,45 @@ class TogglesMixin:
         dpg.configure_item("launch_watch_controls",
                            show=dpg.get_value(self._launch_watch_enabled))
 
-    def _on_cut_toggle(self):
-        en = dpg.get_value(self._cut_enabled)
-        self.theme.retoken(self._cut_lbl,
-                           "accent_green" if en else "disabled")
-        dpg.configure_item("cut_edge_controls", show=en)
+    # ── Score toggles ─────────────────────────────────────────────────────────
+    # A score row draws its own name colour, phrase and value from the widgets
+    # in _refresh_score_rows, so a toggle only has to say "something changed".
+    # The three below keep a body because enabling them does more than that.
 
-    def _on_cs_toggle(self):
-        en = dpg.get_value(self._cs_enabled)
-        self.theme.retoken(self._cs_lbl,
-                           "accent_green" if en else "disabled")
-        dpg.configure_item("cs_controls", show=en)
+    def _score_changed(self):
+        """Invalidate the row list and the Goals panel after a score edit."""
+        self._scores_sig = None
+        self._goals_sig = None
+        self._goal_snap_frame = -1
 
-    def _on_pp_toggle(self):
-        en = dpg.get_value(self._pp_enabled)
-        self.theme.retoken(self._pp_lbl,
-                           "accent_green" if en else "disabled")
-        dpg.configure_item("pp_controls", show=en)
+    _on_cut_toggle = _score_changed
+    _on_cs_toggle = _score_changed
+    _on_pp_toggle = _score_changed
+    _on_reock_toggle = _score_changed
+    _on_representation_toggle = _score_changed
+    _on_minority_cohesion_toggle = _score_changed
+    _on_community_congruence_toggle = _score_changed
+    _on_hc_toggle = _score_changed
+    _on_hprop_toggle = _score_changed
+    _on_hcmp_toggle = _score_changed
+    _on_mm_toggle = _score_changed
+    _on_eg_toggle = _score_changed
+    _on_pb_toggle = _score_changed
+    _on_pg_toggle = _score_changed
+    _on_seats_toggle = _score_changed
+    _on_majority_toggle = _score_changed
+    _on_hinge_toggle = _score_changed
+    _on_popdev_score_toggle = _score_changed
+    _on_alignment_toggle = _score_changed
 
-    def _on_reock_toggle(self):
-        en = dpg.get_value(self._reock_enabled)
-        self.theme.retoken(self._reock_lbl,
-                           "accent_green" if en else "secondary")
-        dpg.configure_item("reock_controls", show=en)
-
-    def _on_representation_toggle(self):
-        en = dpg.get_value(self._representation_enabled)
-        self.theme.retoken(self._representation_lbl,
-                           "accent_green" if en else "secondary")
-        dpg.configure_item("representation_controls", show=en)
-
-    def _on_minority_cohesion_toggle(self):
-        en = dpg.get_value(self._minority_cohesion_enabled)
-        self.theme.retoken(self._minority_cohesion_lbl,
-                           "accent_green" if en else "secondary")
-        dpg.configure_item("minority_cohesion_controls", show=en)
-
-    def _on_community_congruence_toggle(self):
-        en = dpg.get_value(self._community_congruence_enabled)
-        self.theme.retoken(self._community_congruence_lbl,
-                           "accent_green" if en else "secondary")
-        dpg.configure_item("community_congruence_controls", show=en)
-
-    def _on_alignment_toggle(self):
-        en = dpg.get_value(self._alignment_enabled)
-        ready = en and self.runner is not None and self.runner.alignment_data is not None
-        self.theme.retoken(self._alignment_lbl,
-                           "accent_green" if ready else "secondary")
-        dpg.configure_item("alignment_controls", show=en)
+    def _on_hsplit_toggle(self):
+        """County Congruence pairs with County-Edge Bias: switching the score
+        on switches the bias on too, as it always has. Independent from then
+        on."""
+        self._score_changed()
+        if dpg.get_value(self._hsplit_enabled):
+            dpg.set_value(self._county_bias_enabled, True)
+            self._on_county_bias_toggle()
 
     def _on_alignment_focus(self):
         # Party restrictions apply only to a party's voters.
@@ -75,96 +66,15 @@ class TogglesMixin:
         dpg.configure_item(self._alignment_restrict, enabled=not neutral)
         dpg.configure_item("alignment_party_controls", show=not neutral)
 
-    def _on_hc_toggle(self):
-        en = dpg.get_value(self._hc_enabled)
-        self.theme.retoken(self._hc_lbl,
-                           "accent_green" if en else "secondary")
-        dpg.configure_item("hc_controls", show=en)
-
-    def _on_hsplit_toggle(self):
-        en = dpg.get_value(self._hsplit_enabled)
-        self.theme.retoken(self._hsplit_lbl,
-                           "accent_green" if en else "disabled")
-        dpg.configure_item("hsplit_controls", show=en)
-        # County-Edge Bias pairs with this score: enabling the score turns the bias
-        # on and reveals its row, so the bias is never enabled while its own
-        # control is hidden. Independent from then on.
-        if en:
-            dpg.set_value(self._county_bias_enabled, True)
-            dpg.set_value(self._svis_countybias, True)
-            dpg.configure_item("score_row_countybias", show=True)
-            self._on_county_bias_toggle()
-
-    def _on_hprop_toggle(self):
-        en = dpg.get_value(self._hprop_enabled)
-        self.theme.retoken(self._hprop_lbl,
-                           "accent_green" if en else "disabled")
-        dpg.configure_item("hprop_controls", show=en)
-
-    def _on_hcmp_toggle(self):
-        en = dpg.get_value(self._hcmp_enabled)
-        self.theme.retoken(self._hcmp_lbl,
-                           "accent_green" if en else "disabled")
-        dpg.configure_item("hcmp_controls", show=en)
-
-    def _on_popdev_score_toggle(self):
-        en = dpg.get_value(self._popdev_enabled)
-        # Green when weighted OR when the Tolerance Ratchet is on -- the ratchet
-        # drives population deviation even if this score's own weight is 0.
-        ratchet_on = dpg.get_value(self._tolerance_ratchet_mode) != "Off"
-        self.theme.retoken(self._popdev_lbl,
-                           "accent_green" if (en or ratchet_on) else "secondary")
-        dpg.configure_item("popdev_controls", show=en)
-
-    def _on_mm_toggle(self):
-        en = dpg.get_value(self._mm_enabled)
-        self.theme.retoken(self._mm_lbl,
-                           "accent_green" if en else "disabled")
-        dpg.configure_item("mm_controls", show=en)
-
-    def _on_eg_toggle(self):
-        en = dpg.get_value(self._eg_enabled)
-        self.theme.retoken(self._eg_lbl,
-                           "accent_green" if en else "disabled")
-        dpg.configure_item("eg_controls", show=en)
-
-    def _on_pb_toggle(self):
-        en = dpg.get_value(self._pb_enabled)
-        self.theme.retoken(self._pb_lbl,
-                           "accent_green" if en else "disabled")
-        dpg.configure_item("pb_controls", show=en)
-
-    def _on_pg_toggle(self):
-        en = dpg.get_value(self._pg_enabled)
-        self.theme.retoken(self._pg_lbl,
-                           "accent_green" if en else "disabled")
-        dpg.configure_item("pg_controls", show=en)
-
-    def _on_seats_toggle(self):
-        en = dpg.get_value(self._seats_enabled)
-        self.theme.retoken(self._seats_lbl,
-                           "accent_green" if en else "disabled")
-        dpg.configure_item("seats_controls", show=en)
-
-    def _on_majority_toggle(self):
-        en = dpg.get_value(self._majority_enabled)
-        self.theme.retoken(self._majority_lbl,
-                           "accent_green" if en else "disabled")
-        dpg.configure_item("majority_controls", show=en)
-
     def _on_majority_dem_chk(self):
         if dpg.get_value(self._majority_dem_chk):
             dpg.set_value(self._majority_rep_chk, False)
+        self._score_changed()
 
     def _on_majority_rep_chk(self):
         if dpg.get_value(self._majority_rep_chk):
             dpg.set_value(self._majority_dem_chk, False)
-
-    def _on_hinge_toggle(self):
-        en = dpg.get_value(self._hinge_enabled)
-        self.theme.retoken(self._hinge_lbl,
-                           "accent_green" if en else "disabled")
-        dpg.configure_item("hinge_controls", show=en)
+        self._score_changed()
 
     def _on_hinge_dem_chk(self):
         if dpg.get_value(self._hinge_dem_chk):
@@ -174,24 +84,9 @@ class TogglesMixin:
         if dpg.get_value(self._hinge_rep_chk):
             dpg.set_value(self._hinge_dem_chk, False)
 
-    def _set_score_row_vis(self, row_tag: str, show: bool,
-                           chk_item: int, toggle_cb) -> None:
-        """Show/hide a score row; if hiding, force-disable the checkbox.
-
-        A row revealed from here is also pinned, so the Goals filter leaves it
-        alone: asking for a score in the menu outranks it being off.
-        """
-        dpg.configure_item(row_tag, show=show)
-        if show:
-            self._score_rows_pinned.add(row_tag)
-        else:
-            self._score_rows_pinned.discard(row_tag)
-        self._goal_row_sig = None
-        if not show and dpg.get_value(chk_item):
-            dpg.set_value(chk_item, False)
-            toggle_cb()
-
     def _on_county_bias_toggle(self):
+        """County-Edge Bias lives inside the County Congruence row, so it keeps
+        its own label colour and its own controls."""
         en = dpg.get_value(self._county_bias_enabled)
         self.theme.retoken(self._county_bias_lbl,
                            "accent_green" if en else "disabled")

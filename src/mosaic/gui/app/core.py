@@ -37,6 +37,7 @@ from .panels_mixin import PanelsMixin
 from .phase_mixin import PhaseMixin
 from .popups_mixin import PopupsMixin
 from .runner_mixin import RunnerMixin
+from .scores_mixin import ScoresMixin
 from .setup_mixin import SetupMixin
 from .toggles_mixin import TogglesMixin
 from .updates_mixin import UpdatesMixin
@@ -45,6 +46,7 @@ from .updates_mixin import UpdatesMixin
 _APP_MIXINS = (
     SetupMixin,
     GoalsMixin,
+    ScoresMixin,
     PopupsMixin,
     PanelsMixin,
     PhaseMixin,
@@ -137,14 +139,13 @@ class MosaicApp(*INTERNAL_MIXINS, *_APP_MIXINS):
         self._place_unit = "counties"       # what the "county" column holds
         self._goal_rows: dict = {}
         self._goals_sig = None
-        self._goal_row_sig = None
         self._goal_snap = None              # (preset, goal states) this frame
         self._goal_snap_frame = -1
-        self._panel_goals_item = 0
-        self._svis_advanced: int | str = ""
-        # Score rows the user revealed from the Scores menu: the goal filter
-        # hides rows that are off and unclaimed, but never one asked for.
-        self._score_rows_pinned: set = set()
+        # Score rows: built by ScoresMixin, redrawn from the widgets.
+        self._score_rows: dict = {}
+        self._score_fields: dict = {}
+        self._scores_sig = None
+        self._run_tiles_lit = None          # last lit count in the run strip
         # section -> enabled-checkbox attribute, from MenuMixin._PRESET_SCORES.
         self._goal_chk = {sec: chk for sec, chk, *_ in self._PRESET_SCORES}
 

@@ -474,6 +474,9 @@ class MapMixin:
         self._sync_camera_icon_to_theme()
         self._phase_apply_fade()        # repaint phase trail for the new palette
         self._sync_ensemble_theme()
+        # The run-strip tiles are drawlist rectangles, not themed widgets, so
+        # they keep the old palette's colours until something redraws them.
+        self._run_tiles_lit = None
 
     def _sync_camera_icon_to_theme(self):
         """Repaint the map-toolbar camera icon in the current palette's body color."""
