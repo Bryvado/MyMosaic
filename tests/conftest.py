@@ -65,6 +65,7 @@ def app(display, tmp_path_factory):
     application._push_recent_shapefile = lambda *args, **kwargs: None
     application._save_place_unit = lambda: None
     application._save_map_style = lambda: None
+    application._save_visuals = lambda: None
     # No test reaches the network: the tile store fails as if offline unless a
     # test swaps in its own.
     application._basemap_store = _offline_store(tmp_path_factory.mktemp("tiles"))

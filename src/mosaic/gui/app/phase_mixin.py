@@ -155,8 +155,7 @@ class PhaseMixin:
         self._phase_smooth = bool(app_data)
 
     def _on_panel_phase_toggle(self):
-        dpg.configure_item("panel_phase",
-                           show=dpg.get_value(self._panel_phase_item))
+        self._visual_menu_toggle("comet")
 
     def _phase_active_labels(self) -> list:
         """Metrics whose history carries real values right now.

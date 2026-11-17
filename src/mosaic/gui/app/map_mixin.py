@@ -325,11 +325,6 @@ class MapMixin:
         sp = self.theme.palette.spacing
         inner = int(rect_w - 2 * sp.window_padding[0] - 2 * sp.child_border_size)
         inner_h = int(rect_h - 2 * sp.window_padding[1] - 2 * sp.child_border_size)
-        # Score and Entropy split the same width, whatever the map is doing.
-        half = max(80, (inner - sp.item_spacing[0]) // 2)
-        plot = "score_half_plot"
-        if dpg.does_item_exist(plot) and dpg.get_item_configuration(plot)["width"] != half:
-            dpg.configure_item(plot, width=half)
         # Centre the image whenever it is narrower than the box (mid-drag, or
         # at the minimum width), so the state never sits off to one side. The
         # spacer's own item spacing counts toward the offset.
@@ -494,6 +489,7 @@ class MapMixin:
         self._sync_map_style_widgets()  # default line colours are theme tokens
         self._phase_apply_fade()        # repaint phase trail for the new palette
         self._sync_ensemble_theme()
+        self._rebuild_visual_themes()
         # The run-strip tiles are drawlist rectangles, not themed widgets, so
         # they keep the old palette's colours until something redraws them.
         self._run_tiles_lit = None

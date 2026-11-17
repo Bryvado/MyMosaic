@@ -44,11 +44,13 @@ from .scores_mixin import ScoresMixin
 from .setup_mixin import SetupMixin
 from .toggles_mixin import TogglesMixin
 from .updates_mixin import UpdatesMixin
+from .visuals_mixin import VisualsMixin
 
 # App mixins compose one class; order is irrelevant (no method names overlap).
 _APP_MIXINS = (
     SetupMixin,
     BasemapMixin,
+    VisualsMixin,
     GoalsMixin,
     ScoresMixin,
     PopupsMixin,
@@ -129,6 +131,7 @@ class MosaicApp(*INTERNAL_MIXINS, *_APP_MIXINS):
         self._map_data_gdf_id: int = 0
         self._init_map_navigation()
         self._init_basemap()
+        self._init_visuals()
 
         # Plot appearance toggle (app-local)
         self._limit_plots: int | str = ""   # DPG checkbox tag, set during setup
@@ -152,7 +155,6 @@ class MosaicApp(*INTERNAL_MIXINS, *_APP_MIXINS):
         self._scores_sig = None
         self._run_tiles_lit = None          # last lit count in the run strip
         self._columns = (300, 600, 440)     # (setup, map, scores) widths now
-        self._charts_item = 0               # Views > Score and entropy charts
         # Map style kept in .mosaic/map_style.json, not in presets: it is how
         # the map looks on this machine, not part of a scoring recipe.
         self._fill_opacity_value = 1.0
@@ -355,6 +357,7 @@ class MosaicApp(*INTERNAL_MIXINS, *_APP_MIXINS):
         self._refresh_ens_roster()
         self._refresh_ens_map()
         self._sync_basemap()
+        self._sync_visuals()
         dpg.render_dearpygui_frame()
 
     def run(self):

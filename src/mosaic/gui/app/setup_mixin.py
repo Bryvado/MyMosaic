@@ -11,8 +11,6 @@ from ._common import (
     _ASSETS_DIR,
     _CAMERA_ICON_SIZE,
     _FILL_NONE,
-    _HALF_PLOT_H,
-    _HALF_PLOT_W,
     _MAP_DH,
     _MAP_DW,
     _MAP_H,
@@ -155,6 +153,7 @@ class SetupMixin:
         self._build_hinge_panel()
         self._build_district_info_panel()
         self._build_phase_panel()
+        self._build_visual_panels()
 
         # ── Main window ───────────────────────────────────────────────────────
         # The page may scroll on short displays. Map children block wheel
@@ -281,14 +280,6 @@ class SetupMixin:
                 # omits County-Edge Bias (not a score chart) and appends panels
                 # with no score row, such as Temperature and District Info.
                 with dpg.menu(label="Views"):
-                    self._charts_item = dpg.add_menu_item(
-                        label="Score and entropy charts", check=True,
-                        default_value=False,
-                        callback=lambda: dpg.configure_item(
-                            "main_charts",
-                            show=dpg.get_value(self._charts_item)),
-                    )
-                    dpg.add_separator()
                     # ── Geography ── (mirrors the Scores menu 1:1)
                     self._panel_cuts_item = dpg.add_menu_item(
                         label="Cut Edges", check=True, default_value=False,
@@ -602,37 +593,7 @@ class SetupMixin:
                             B.ATTRIBUTION, "muted")
                     self._basemap_credit = credit
                     self._build_run_strip()
-                    # Score and Entropy are hidden until step 3 turns them into
-                    # Visuals cards, so the map gets the height; Views > Score
-                    # and entropy charts brings them back.
-                    with dpg.group(horizontal=True, tag="main_charts",
-                                   show=False):
-                        with dpg.group():
-                            self._hint(self.theme.text("Score", "heading"),
-                                       "score")
-                            with dpg.plot(height=_HALF_PLOT_H,
-                                          tag="score_half_plot",
-                                          width=_HALF_PLOT_W, no_menus=True):
-                                dpg.add_plot_legend()
-                                dpg.add_plot_axis(dpg.mvXAxis, label="Iteration",
-                                                  tag="score_x")
-                                with dpg.plot_axis(dpg.mvYAxis, label="Score",
-                                                   tag="score_y"):
-                                    dpg.add_line_series([], [], label="Score",
-                                                        tag="score_series")
-                        with dpg.group():
-                            self._hint(self.theme.text("Entropy", "heading"),
-                                       "entropy")
-                            with dpg.plot(height=_HALF_PLOT_H, width=-1,
-                                          no_menus=True,
-                                          tag="entropy_half_plot"):
-                                dpg.add_plot_legend()
-                                dpg.add_plot_axis(dpg.mvXAxis, label="Iteration",
-                                                  tag="acc_x")
-                                with dpg.plot_axis(dpg.mvYAxis, label="Rate (%)",
-                                                   tag="acc_y"):
-                                    dpg.add_line_series([], [], label="Accepted",
-                                                        tag="acc_series")
+                    self._build_visuals_row()
 
                 # ── Right: every score, grouped, one line each ────────────
                 with dpg.child_window(width=_SCORES_W, border=True,
@@ -640,6 +601,7 @@ class SetupMixin:
                     self._build_scores_column()
 
         self._refresh_recent_presets_menu()
+        self._wrap_visual_cards()
         dpg.set_primary_window("main_window", True)
         dpg.setup_dearpygui()
 
@@ -986,8 +948,7 @@ class SetupMixin:
 
     # Blocks under the map, top to bottom. Each one that is shown takes its
     # measured height out of the map's.
-    _BELOW_MAP = ("basemap_credit", "map_style_row", "run_strip", "main_charts",
-                  "visuals_row")
+    _BELOW_MAP = ("basemap_credit", "map_style_row", "run_strip", "visuals_row")
 
     def _update_map_fill_width(self):
         # Image dimensions exclude frame padding; match the adjacent text button.

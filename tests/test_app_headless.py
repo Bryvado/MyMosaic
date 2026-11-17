@@ -202,7 +202,8 @@ def test_the_map_fills_the_centre_column(app, size):
     assert canvas_h == box_h - 2 * sp.window_padding[1] - 2 * sp.child_border_size
     assert (app.map_view._w, app.map_view._h) == (canvas_w, canvas_h)
     # It is the largest thing in the column, not a strip at the top of it.
-    assert box_h > 0.65 * col_h
+    assert box_h > 0.45 * col_h
+    assert box_h > 1.5 * dpg.get_item_rect_size("visuals_row")[1]
     assert box_w >= col_w - 2
     # Nothing under the map is pushed out of the column.
     (_, strip_y), (_, strip_h) = _column("run_strip")
@@ -234,23 +235,145 @@ def test_the_toolbar_sits_above_the_map(app, size):
     assert dpg.get_y_scroll("map_column") == 0
 
 
-def test_charts_are_hidden_but_reachable(app):
-    assert not dpg.is_item_shown("main_charts")
+def _frames(app, n=4):
+    for _ in range(n):
+        app.run_frame()
+
+
+def _reset_visuals(app):
+    from mosaic.gui.visuals import VisualsState
+    app._visuals = VisualsState()
+    app._visual_placed.clear()
+    _frames(app)
+
+
+@pytest.mark.parametrize("size", SIZES)
+def test_the_default_visuals_dock_in_the_row(app, size):
+    from mosaic.gui import visuals as V
+    _resize(app, *size)
+    _reset_visuals(app)
+    assert app._visuals.row == list(V.DEFAULT_ROW)
+    rx, ry, rw, rh = app._visuals_row_rect()
+    last_right = rx
+    for key in V.DEFAULT_ROW:
+        panel = V.BY_KEY[key].panel
+        assert dpg.is_item_shown(panel), key
+        x, y = dpg.get_item_pos(panel)
+        w, h = dpg.get_item_width(panel), dpg.get_item_height(panel)
+        assert (y, h) == (int(ry), int(rh)) and w >= V.MIN_W
+        assert x >= last_right - 1 and x + w <= rx + rw + 1, key
+        last_right = x + w
+    # The row is inside the window, under the run strip.
+    assert ry + rh <= size[1]
+    (_, strip_y), (_, strip_h) = _column("run_strip")
+    assert dpg.get_item_state("visuals_row")["pos"][1] >= strip_y + strip_h
+    # The plots that used to sit in the centre column are the Score card now.
+    assert dpg.get_item_parent("score_half_plot") == "panel_score"
+
+
+def test_a_visual_floats_docks_pins_and_closes(app):
+    from mosaic.gui import visuals as V
     _resize(app, 1843, 925)
-    without = dpg.get_item_rect_size("map_container")[1]
-    dpg.set_value(app._charts_item, True)
-    dpg.get_item_callback(app._charts_item)()
+    _reset_visuals(app)
+    row = app._visuals_row_rect()
+    panel = V.BY_KEY["score"].panel
+
+    # Let go over the map: it floats where it was dropped.
+    dpg.configure_item(panel, pos=[700, 200])
+    app._drop_visual("score", (720, 210), row)
+    _frames(app)
+    assert "score" in app._visuals.floating and "score" not in app._visuals.row
+    assert dpg.get_item_pos(panel) == [700, 200]
+    assert not dpg.get_item_configuration(panel)["no_resize"]
+    assert dpg.get_item_configuration(panel)["min_size"] == [V.MIN_W, V.MIN_H]
+
+    # A corner resize is picked up and kept.
+    dpg.configure_item(panel, width=420, height=300)
+    _frames(app)
+    assert app._visuals.floating["score"]["size"] == [420, 300]
+
+    # Pinned: it cannot be dropped anywhere else, or resized.
+    app._on_visual_pin(None, None, "score")
+    _frames(app)
+    assert dpg.get_item_configuration(panel)["no_resize"]
+    app._drop_visual("score", (row[0] + 5, row[1] + 5), row)
+    _frames(app)
+    assert "score" in app._visuals.floating
+    app._on_visual_pin(None, None, "score")
+
+    # Unpinned and dropped on the row: back in, at the slot under the pointer.
+    app._drop_visual("score", (row[0] + row[2] - 5, row[1] + 5), row)
+    _frames(app)
+    assert app._visuals.row[-1] == "score" and not app._visuals.floating
+
+    # Closed: gone from the row, and the map takes the height back when the
+    # row is empty.
+    before = dpg.get_item_rect_size("map_container")[1]
+    for key in list(app._visuals.row):
+        app._on_visual_close(None, None, key)
     _resize(app, 1843, 925)
-    assert dpg.is_item_shown("main_charts")
-    (_, _), (_, col_h) = _column("map_column")
-    charts_h = dpg.get_item_rect_size("main_charts")[1]
-    assert charts_h > 100
-    # They take their height from the map rather than falling off the window.
-    assert dpg.get_item_rect_size("map_container")[1] < without - 100
-    dpg.set_value(app._charts_item, False)
-    dpg.get_item_callback(app._charts_item)()
+    assert not dpg.is_item_shown(panel)
+    assert dpg.get_item_rect_size("map_container")[1] > before + 150
+    _reset_visuals(app)
+
+
+def test_the_views_menu_and_the_picker_drive_the_same_cards(app):
     _resize(app, 1843, 925)
-    assert dpg.get_item_rect_size("map_container")[1] == without
+    _reset_visuals(app)
+    dpg.set_value(app._panel_temp_item, True)
+    app._on_panel_temp_toggle()
+    _frames(app)
+    assert app._visuals.is_shown("temperature")
+    assert dpg.is_item_shown("panel_temperature")
+    app._on_visual_pick(None, None, "temperature")       # picked again: removed
+    _frames(app)
+    assert not dpg.is_item_shown("panel_temperature")
+    assert not dpg.get_value(app._panel_temp_item)
+    # The picker lists every visual.
+    app._open_visual_picker()
+    from mosaic.gui.visuals import CATALOG
+    assert len(dpg.get_item_children("visual_picker", 1)) == len(CATALOG)
+    dpg.configure_item("visual_picker", show=False)
+    _reset_visuals(app)
+
+
+def test_a_visual_the_map_cannot_feed_is_not_added(app):
+    _reset_visuals(app)
+    assert app._visual_has().get("batch") is False
+    app._set_visual("batch_hist", True)
+    assert not dpg.does_item_exist("popup_ens_hist")
+    arrays = app.runner.election_arrays
+    app.runner.election_arrays = []
+    try:
+        app._visuals.remove("likely_seats")
+        app._set_visual("likely_seats", True)
+        assert not app._visuals.is_shown("likely_seats")
+    finally:
+        app.runner.election_arrays = arrays
+        _reset_visuals(app)
+
+
+def test_likely_seats_draws_the_plan_on_screen(app):
+    import numpy as np
+    _resize(app, 1843, 925)
+    _reset_visuals(app)
+    n = 14
+    before = (app.state.current_assignment, app.state.num_districts)
+    app.state.update(current_assignment=np.arange(2666) % n, num_districts=n)
+    app._likely_at = 0.0
+    app._likely_sig = None
+    try:
+        _frames(app)
+    finally:
+        app.state.update(current_assignment=before[0], num_districts=before[1])
+    xs, ys = [], []
+    for series in app._likely_series:
+        data = dpg.get_value(series)
+        xs += list(data[0])
+        ys += list(data[1])
+    assert sorted(xs) == list(range(n + 1))
+    assert np.isclose(sum(ys), 100.0, atol=1e-6)
+    assert "Most likely" in dpg.get_value(app._likely_note)
 
 
 @pytest.mark.parametrize("size", SIZES)
