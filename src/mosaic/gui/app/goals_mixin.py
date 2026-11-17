@@ -15,13 +15,17 @@ from mosaic import goals as G
 from ._common import (
     _CONTRIB_BAR_METRICS,
     _CONTRIB_METRIC_SECTION,
-    _LEFT_W,
+    _GOAL_ORDER,
     _SETTINGS_DIR,
+    _SETUP_W,
     dpg,
     log,
 )
 
-_GOALS_W = 430          # panel width; wraps and slider widths follow it
+# The strength dropdown lists the ladder, plus Custom when the weights sit
+# off it -- a value the user cannot pick, only arrive at.
+_LADDER_ITEMS = tuple(name for name, _x in G.LADDER)
+_CUSTOM = "Custom"
 _PLACE_UNIT_FILE = _SETTINGS_DIR / "place_unit.json"
 
 # Data a goal needs, phrased for the gap line. _PRESET_NEEDS supplies which
@@ -64,98 +68,115 @@ class GoalsMixin:
         raw = (dpg.get_value(self._place_unit_input) or "").strip()[:24]
         self._place_unit = raw or G.PLACE_UNIT_DEFAULT
         self._save_place_unit()
-        self._goals_sig = None          # labels mention the unit; redraw them
+        # Goal names, score phrases and the contributors table all name the
+        # unit; make each redraw itself.
+        self._goals_sig = None
+        self._scores_sig = None
         self._contrib_sig = None
 
     # ── Build ─────────────────────────────────────────────────────────────────
 
-    def _build_goals_panel(self) -> None:
-        """One row per goal: a title, a strength slider, and the few options a
-        goal owns. Built once; everything after is set_value."""
-        self._goal_rows: dict[str, dict] = {}
-        self._goals_sig = None           # last state pushed to the widgets
-        wrap = _GOALS_W - 24
+    def _build_goals_column(self) -> None:
+        """Goals in the left column: one line per goal, name and a strength.
 
-        with dpg.window(
-            label="Goals", tag="panel_goals", show=False,
-            width=_GOALS_W, height=700,
-            min_size=[_GOALS_W, 240], max_size=[_GOALS_W, 10_000],
-            pos=[_LEFT_W + 40, 60],
-            on_close=lambda: dpg.set_value(self._panel_goals_item, False),
+        The fine-tune slider moves into a small popup opened from the row, so
+        the common case -- picking a named strength -- is one click and the
+        whole set fits a 300px column.
+        """
+        self._goal_rows: dict[str, dict] = {}
+        self._goal_tips: dict = {}
+        self._goals_sig = None
+        with dpg.group(horizontal=True):
+            self.theme.text("Goals", "heading")
+            dpg.add_spacer(width=_SETUP_W - 190)
+            btn = dpg.add_button(label="Starting points\u2026", width=120,
+                                 callback=lambda: dpg.configure_item(
+                                     "popup_goal_starters", show=True))
+            dpg.bind_item_theme(btn, self.theme.antinudge_theme)
+        self._tooltip(btn, "A named set of goal strengths, applied together.")
+        dpg.add_separator()
+        self._goal_conflict = self.theme.text("", "warning",
+                                              wrap=_SETUP_W - 24, show=False)
+        for gid in _GOAL_ORDER:
+            self._build_goal_row(G.GOALS_BY_ID[gid])
+        self._build_goal_starters_popup()
+        self._build_goal_tune_popup()
+
+    def _build_goal_starters_popup(self) -> None:
+        with self._dialog(
+            "Starting points", "popup_goal_starters", (380, 180), show=False,
+            primary=("Apply", self._on_goal_starter),
+            secondary=("Cancel", lambda: dpg.configure_item(
+                "popup_goal_starters", show=False)),
         ):
             self.theme.text(
-                "Say what this map should prioritize. Each goal sets the score "
-                "weights below it, so you can still open any score and tune it "
-                "by hand.",
-                "muted", wrap=wrap,
-            )
+                "Each one replaces every goal's strength, the same as setting "
+                "them by hand.", "muted", wrap=350)
             dpg.add_spacer(height=4)
+            self._goal_starter = dpg.add_combo(
+                items=[name for _sid, name, _s in G.STARTERS],
+                default_value=G.STARTERS[0][1], width=-1)
 
-            with dpg.group(horizontal=True):
-                self.theme.text("Start from", "subheading")
-                self._goal_starter = dpg.add_combo(
-                    items=[name for _sid, name, _s in G.STARTERS],
-                    default_value="", width=226,
-                )
-                btn = dpg.add_button(label="Apply", width=60,
-                                     callback=self._on_goal_starter)
-                dpg.bind_item_theme(btn, self.theme.antinudge_theme)
-            self._tooltip(
-                self._goal_starter,
-                "A named set of goal strengths. Applying one replaces every "
-                "goal's strength, the same as setting them by hand.",
-            )
-            dpg.add_spacer(height=2)
-            self._goal_conflict = self.theme.text("", "warning", wrap=wrap,
-                                                  show=False)
-            dpg.add_separator()
+    def _build_goal_tune_popup(self) -> None:
+        """One shared fine-tune popup; the row being tuned is held in
+        _goal_tuning, so twenty sliders are not built for eight goals."""
+        self._goal_tuning = ""
+        with self._dialog(
+            "Fine-tune", "popup_goal_tune", (360, 170), show=False,
+            primary=("Done", lambda: dpg.configure_item(
+                "popup_goal_tune", show=False)),
+        ):
+            self._goal_tune_title = self.theme.text("", "heading")
+            self.theme.text(
+                "Move between and past the named strengths. The label says "
+                "where the weights actually sit.", "muted", wrap=330)
+            dpg.add_spacer(height=4)
+            self._goal_tune_slider = dpg.add_slider_int(
+                default_value=0, min_value=0, max_value=G.STRENGTH_MAX,
+                width=-1, format="Off", clamped=True,
+                callback=lambda: self._on_goal_strength(self._goal_tuning))
 
-            for goal in G.GOALS:
-                self._build_goal_row(goal, wrap)
+    def _on_goal_tune_open(self, gid: str) -> None:
+        self._goal_tuning = gid
+        dpg.set_value(self._goal_tune_title,
+                      G.GOALS_BY_ID[gid].title(self._place_unit))
+        dpg.set_value(self._goal_tune_slider,
+                      int(round(self._goal_rows[gid]["strength"])))
+        dpg.configure_item("popup_goal_tune", show=True)
 
-            dpg.add_separator()
-            self._goal_advanced_chk = dpg.add_checkbox(
-                label="Advanced: show all scores",
-                callback=lambda: self._on_advanced_scores("panel"),
-            )
-            self._tooltip(
-                self._goal_advanced_chk,
-                "Off: the score list shows only scores that are on or belong "
-                "to an active goal. On: it shows every score you have picked "
-                "in the Scores menu.",
-            )
-            with dpg.group(horizontal=True):
-                self.theme.text("County column holds", "subheading")
-                self._place_unit_input = dpg.add_input_text(
-                    default_value=self._place_unit, width=120,
-                    callback=self._on_place_unit_change, on_enter=False,
-                )
-            self._tooltip(
-                self._place_unit_input,
-                "What the column you loaded as \"county\" actually holds. "
-                "Redistricting one county with city names in that column? Set "
-                "this to \"cities\" and the goal reads \"Keep cities whole\". "
-                "Wording only -- the score and its settings do not change.",
-            )
-
-    def _build_goal_row(self, goal: "G.Goal", wrap: int) -> None:
+    def _build_goal_row(self, goal: "G.Goal") -> None:
         label, blurb = goal.text(self._place_unit)
-        row: dict = {}
+        row: dict = {"strength": 0.0}
         with dpg.group(tag=f"goal_row_{goal.gid}"):
-            row["title"] = self.theme.text(label, "disabled")
-            self._tooltip(row["title"], blurb)
-            with dpg.group(tag=f"goal_ctl_{goal.gid}"):
-                row["slider"] = dpg.add_slider_int(
-                    default_value=0, min_value=0, max_value=G.STRENGTH_MAX,
-                    width=-1, format="Off", clamped=True,
-                    callback=lambda s, a, u: self._on_goal_strength(u),
-                    user_data=goal.gid,
-                )
-                self._build_goal_extras(goal, row)
-            # Shown instead of the slider when this map cannot support the goal.
-            row["gap"] = self.theme.text("", "disabled_deep", wrap=wrap,
-                                         show=False)
-            dpg.add_spacer(height=5)
+            with dpg.table(header_row=False, policy=dpg.mvTable_SizingFixedFit,
+                           borders_innerH=False, borders_outerH=False,
+                           borders_innerV=False, borders_outerV=False,
+                           width=-1):
+                dpg.add_table_column(width_stretch=True,
+                                     init_width_or_weight=1.0)
+                dpg.add_table_column(width_fixed=True, init_width_or_weight=108)
+                dpg.add_table_column(width_fixed=True, init_width_or_weight=20)
+                with dpg.table_row():
+                    # "Minority representation" does not fit one line in a
+                    # 300px column, so the name wraps as it does in the design.
+                    row["title"] = self.theme.text(
+                        label, "disabled", wrap=_SETUP_W - 180)
+                    with dpg.group():
+                        with dpg.group(tag=f"goal_ctl_{goal.gid}"):
+                            row["combo"] = dpg.add_combo(
+                                items=list(_LADDER_ITEMS), default_value="Off",
+                                width=-1,
+                                callback=lambda s, a, u: self._on_goal_combo(u),
+                                user_data=goal.gid)
+                        row["gap"] = self.theme.text("unavailable", "disabled",
+                                                     show=False)
+                    row["tune"] = dpg.add_button(
+                        label="\u2026", width=18,
+                        callback=lambda s, a, u: self._on_goal_tune_open(u),
+                        user_data=goal.gid)
+            self._build_goal_extras(goal, row)
+        self._tooltip(row["title"], blurb)
+        self._tooltip(row["tune"], "Fine-tune this goal's strength.")
         self._goal_rows[goal.gid] = row
 
     def _build_goal_extras(self, goal: "G.Goal", row: dict) -> None:
@@ -204,8 +225,7 @@ class GoalsMixin:
             self.state.update(status_message=f"Could not apply goal: {e}")
             return
         if keep[0] and not dpg.get_value(self._hinge_enabled):
-            dpg.set_value(self._svis_hinge, True)
-            dpg.configure_item("score_row_hinge", show=True)
+            # Every score is always listed now, so there is no row to reveal.
             dpg.set_value(self._hinge_enabled, True)
             self._on_hinge_toggle()
         self._preset_set(self._w_hinge, keep[1])
@@ -227,17 +247,37 @@ class GoalsMixin:
             return {"party_focus": inv[dpg.get_value(row["focus"])]}
         return {}
 
+    def _on_goal_combo(self, gid: str) -> None:
+        """A named strength was picked from the row's dropdown."""
+        name = dpg.get_value(self._goal_rows[gid]["combo"])
+        if name == _CUSTOM:
+            # Custom is what the weights are, not something to apply; put the
+            # dropdown back and send the user to the fine-tune popup instead.
+            self._goals_sig = None
+            self._on_goal_tune_open(gid)
+            return
+        want = dict(G.LADDER).get(name)
+        if want is None:
+            return
+        self._set_goal_strength(gid, float(want))
+
     def _on_goal_strength(self, gid: str) -> None:
+        """The fine-tune slider moved."""
+        if gid:
+            self._set_goal_strength(gid, float(dpg.get_value(
+                self._goal_tune_slider)))
+
+    def _set_goal_strength(self, gid: str, x: float) -> None:
         if self.runner is None or self.runner.gdf is None:
             self.state.update(status_message="Open a map before setting goals.")
-            self._goals_sig = None       # put the slider back where it was
+            self._goals_sig = None       # put the dropdown back where it was
             return
-        x = float(dpg.get_value(self._goal_rows[gid]["slider"]))
         p = G.apply_goal(self._preset_from_widgets(), gid, x,
                          **self._goal_opts(gid))
         self._apply_goal_preset(p)
 
     def _on_goal_starter(self) -> None:
+        dpg.configure_item("popup_goal_starters", show=False)
         name = dpg.get_value(self._goal_starter)
         pick = next((s for _sid, n, s in G.STARTERS if n == name), None)
         if pick is None:
@@ -328,10 +368,9 @@ class GoalsMixin:
         return self._goal_snap
 
     def _sync_goals_panel(self) -> None:
-        """Refresh the goal rows from the score widgets. Called every frame the
-        panel is open; every DPG write is behind a change check."""
-        if not dpg.is_item_shown("panel_goals"):
-            return
+        """Refresh the goal rows from the score widgets. The rows live in the
+        left column and are always on screen, so every DPG write is behind a
+        change check and a steady screen costs one signature comparison."""
         preset, states = self._goal_snapshot()
         have = self._goal_data_available()
         gaps = {g.gid: self._goal_gap(g, have) for g in G.GOALS}
@@ -339,40 +378,45 @@ class GoalsMixin:
         sig = (self._place_unit, tuple(sorted(
             (gid, round(s.strength, 3), s.exact, s.label) for gid, s in states.items())),
             tuple(sorted(gaps.items())), note,
-            bool(dpg.get_value(self._svis_advanced)))
+            )
         if sig == self._goals_sig:
             return
         self._goals_sig = sig
 
-        for goal in G.GOALS:
-            self._sync_goal_row(goal, states[goal.gid], gaps[goal.gid], preset)
+        for gid in _GOAL_ORDER:
+            goal = G.GOALS_BY_ID[gid]
+            self._sync_goal_row(goal, states[gid], gaps[gid], preset)
         dpg.set_value(self._goal_conflict, note)
         dpg.configure_item(self._goal_conflict, show=bool(note))
-        dpg.set_value(self._goal_advanced_chk,
-                      bool(dpg.get_value(self._svis_advanced)))
 
     def _sync_goal_row(self, goal: "G.Goal", state: "G.GoalState", gap: str,
                        preset: dict) -> None:
         row = self._goal_rows[goal.gid]
-        label, blurb = goal.text(self._place_unit)
+        label, _blurb = goal.text(self._place_unit)
         if dpg.get_value(row["title"]) != label:
             dpg.set_value(row["title"], label)
         self.theme.retoken(row["title"],
-                           "disabled_deep" if gap else
-                           "accent_green" if state.on else "disabled")
+                           "disabled" if gap else
+                           "accent_green" if state.on else "body")
         dpg.configure_item(f"goal_ctl_{goal.gid}", show=not gap)
+        dpg.configure_item(row["tune"], show=not gap)
         dpg.configure_item(row["gap"], show=bool(gap))
-        dpg.set_value(row["gap"], gap)
+        row["gap_text"] = gap
+        self._tooltip_set(row["gap"], gap)
         if gap:
             return
 
-        # The slider stays where the user left it while the weights still agree
-        # with it; once a weight is edited by hand on its own score row they
-        # stop agreeing, and the slider follows the weights instead.
-        at = int(dpg.get_value(row["slider"]))
-        if not G.matches_strength(preset, goal.gid, at):
-            dpg.set_value(row["slider"], int(round(state.strength)))
-        dpg.configure_item(row["slider"], format=state.label)
+        row["strength"] = state.strength
+        # "Custom" is only ever shown, never chosen: it is added to the list
+        # while the weights sit off the ladder and taken away again after.
+        items = list(_LADDER_ITEMS) + ([_CUSTOM] if not state.exact else [])
+        if dpg.get_item_configuration(row["combo"])["items"] != items:
+            dpg.configure_item(row["combo"], items=items)
+        want = state.label if state.exact else _CUSTOM
+        if dpg.get_value(row["combo"]) != want:
+            dpg.set_value(row["combo"], want)
+        self._tooltip_set(row["combo"],
+                          state.label if not state.exact else "")
 
         extra = f"goal_extra_{goal.gid}"
         if dpg.does_item_exist(extra):
@@ -387,75 +431,16 @@ class GoalsMixin:
             if dpg.get_value(row["focus"]) != want:
                 dpg.set_value(row["focus"], want)
 
-    # ── Score-row filtering ───────────────────────────────────────────────────
-
-    def _on_advanced_scores(self, src: str) -> None:
-        """Keep the Scores-menu item and the panel checkbox in step."""
-        if src == "panel":
-            dpg.set_value(self._svis_advanced,
-                          bool(dpg.get_value(self._goal_advanced_chk)))
-        else:
-            dpg.set_value(self._goal_advanced_chk,
-                          bool(dpg.get_value(self._svis_advanced)))
-        self._goal_row_sig = None
-        self._goals_sig = None
-
-    def _active_goal_sections(self) -> set[str]:
-        """Sections belonging to a goal that has at least one score on.
-
-        Read straight off the checkboxes and the three direction radios rather
-        than through a full preset, since this runs every frame whether the
-        Goals panel is open or not.
-        """
-        on = {sec for sec, chk in self._goal_chk.items()
-              if dpg.get_value(getattr(self, chk))}
-        modes = {sec: dpg.get_value(getattr(self, attr))
-                 for sec, attr in self._PRESET_DIR_ATTRS}
-        out: set[str] = set()
-        for goal in G.GOALS:
-            live = False
-            for sec in goal.sections:
-                if sec not in on:
-                    continue
-                if sec in modes:
-                    fair = modes[sec] == "Fair"
-                    if fair != (goal.gid == "fairness"):
-                        continue
-                live = True
-                break
-            if live:
-                out |= set(goal.sections)
-                if goal.gid == "counties":
-                    out.add("county_bias")   # the bias pairs with the score
-        return out
-
-    def _apply_goal_row_filter(self) -> None:
-        """Hide score rows that are neither on nor part of an active goal.
-
-        Visibility stays the Scores menu's to grant: this only takes it away,
-        and never touches a checkbox, so no score is switched off by being
-        filtered out. A row the user reveals from the menu is pinned and stays.
-        """
-        advanced = bool(dpg.get_value(self._svis_advanced))
-        rows = list(self._PRESET_SCORES) + [
-            ("_hinge", "_hinge_enabled", "", "_svis_hinge", "score_row_hinge", "")]
-        picked = {row: bool(dpg.get_value(getattr(self, svis)))
-                  for _s, _c, _cb, svis, row, _l in rows}
-        enabled = {row: bool(dpg.get_value(getattr(self, chk)))
-                   for _s, chk, _cb, _v, row, _l in rows}
-        active = set() if advanced else self._active_goal_sections()
-        sig = (advanced, tuple(sorted(picked.items())),
-               tuple(sorted(enabled.items())), tuple(sorted(active)),
-               tuple(sorted(self._score_rows_pinned)))
-        if sig == self._goal_row_sig:
-            return
-        self._goal_row_sig = sig
-        for sec, _chk, _cb, _svis, row, _lbl in rows:
-            show = picked[row]
-            if show and not advanced:
-                show = (enabled[row] or sec in active
-                        or row in self._score_rows_pinned)
-            dpg.configure_item(row, show=show)
+    def _tooltip_set(self, widget, text: str) -> None:
+        """Fill in a row tooltip created at build time, or hide it."""
+        tip = self._goal_tips.get(widget)
+        if tip is None:
+            with dpg.tooltip(parent=widget, delay=0.4) as holder:
+                tip = (holder, dpg.add_text("", wrap=280))
+            self._goal_tips[widget] = tip
+        dpg.configure_item(tip[0], show=bool(text))
+        if text:
+            dpg.set_value(tip[1], text)
 
     # ── Score Contributors grouping ───────────────────────────────────────────
 

@@ -406,7 +406,8 @@ class EnsembleViewsMixin:
         if not dpg.does_item_exist("main_window"):
             return
         if focused != previous:
-            for tag in ("main_top_controls", "main_score_controls"):
+            # One group now holds all three columns of the redesigned screen.
+            for tag in ("main_columns",):
                 if dpg.does_item_exist(tag):
                     dpg.configure_item(tag, enabled=not focused)
             if dpg.does_item_exist("main_menu_bar"):

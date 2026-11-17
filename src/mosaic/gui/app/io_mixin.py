@@ -770,6 +770,9 @@ class IOMixin:
             return
 
         self.runner.alignment_data = data
+        # Plan Continuity is gated on a reference plan existing; one does now.
+        dpg.configure_item(self._alignment_enabled, enabled=True)
+        self._scores_sig = None
         n_run = dpg.get_value(self._num_districts)
         note = f", run {n_run}" if data.n_alt_districts != n_run else ""
         dpg.set_value(
@@ -788,6 +791,8 @@ class IOMixin:
     def _on_clear_alignment(self):
         if self.runner is not None:
             self.runner.alignment_data = None
+        dpg.configure_item(self._alignment_enabled, enabled=False)
+        self._scores_sig = None
         dpg.set_value(self._alignment_info, "No plan loaded")
         self.theme.retoken(self._alignment_info, "error")
         dpg.set_value(self._alignment_enabled, False)

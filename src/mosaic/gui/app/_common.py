@@ -389,8 +389,124 @@ _CONTRIB_GOAL_COLORS = {
     "_other":      (160, 160, 165, 220),
 }
 
+# ── Score list (redesigned main screen) ───────────────────────────────────────
+# One entry per score, in screen order, grouped under the three subheadings.
+# Phrases come from docs/design/screen.html and say what the score favors; they
+# are capped near 45 characters so a row never wraps. "{unit}" is the place-unit
+# name from the Goals work ("counties", "cities", ...).
+#
+# Fields: preset section, display name, phrase, group index, weight widget
+# attributes, extras key for the controls that live in the expanded row.
+# `hinge` has no preset section (it is deliberately outside presets, see
+# presets.py) and carries the sentinel "" instead.
+_SCORE_GROUPS = ("Geography and population", "Elections", "Demographics")
+
+_SCORE_ROWS = (
+    ("holistic_compactness", "Compactness",
+     "Less stretched, less irregular shapes", 0,
+     ("_w_holistic_compactness",), None),
+    ("polsby_popper", "Polsby-Popper",
+     "Shape: area against perimeter", 0, ("_w_polsby_popper",), None),
+    ("reock", "Reock",
+     "Shape: area against bounding circle", 0, ("_w_reock",), None),
+    ("cut_edges", "Cut Edges",
+     "Fewer neighboring precincts split apart", 0, ("_w_cut_edges",), None),
+    ("holistic_splitting", "County Congruence",
+     "Keeps {unit} together", 0, ("_w_holistic_splitting",), "county_bias"),
+    ("county_splits", "Classic Splitting",
+     "Count-based limit on splits", 0,
+     ("_w_county_excess", "_w_county_unified"), "county_splits"),
+    ("pop_deviation", "Population Deviation",
+     "Populations closer to the ideal", 0, ("_w_pop_deviation",), None),
+    ("alignment", "Plan Continuity",
+     "Keeps people in their district", 0, ("_w_alignment",), None),
+    ("mean_median", "Mean-Median",
+     "Partisan asymmetry: median against mean", 1,
+     ("_w_mean_median",), "aim_mm"),
+    ("efficiency_gap", "Efficiency Gap",
+     "Partisan asymmetry: wasted votes", 1,
+     ("_w_efficiency_gap",), "aim_eg"),
+    ("partisan_bias", "Partisan Bias",
+     "Partisan asymmetry: seats at an even vote", 1,
+     ("_w_partisan_bias",), "aim_pb"),
+    ("partisan_gini", "Partisan Gini",
+     "Partisan asymmetry across all vote levels", 1,
+     ("_w_partisan_gini",), None),
+    ("holistic_proportionality", "Proportionality",
+     "Seat balance matches vote balance", 1,
+     ("_w_holistic_proportionality",), None),
+    ("holistic_competitiveness", "Competitiveness",
+     "Less certain election outcomes", 1,
+     ("_w_holistic_competitiveness",), None),
+    ("dem_seats", "Expected Dem Seats",
+     "Moves expected Democratic seats up or down", 1,
+     ("_w_dem_seats",), "seats_dir"),
+    ("majority_chance", "Chance of Majority",
+     "Chance a party wins most districts", 1, ("_w_majority",), "majority"),
+    ("", "Supermajority / Hinge",
+     "Chance a party reaches a seat target", 1, ("_w_hinge",), "hinge"),
+    ("representation", "Electoral Opportunity",
+     "Group shares as a proxy for opportunity", 2,
+     ("_w_representation",), None),
+    ("minority_cohesion", "Neighborhood Severance",
+     "Avoids cutting through concentrated areas", 2,
+     ("_w_minority_cohesion",), None),
+    ("community_congruence", "Community Dispersion",
+     "Avoids spreading a community too thin", 2,
+     ("_w_community_congruence",), None),
+)
+
+# What a score's phrase says instead when this map cannot support it. Keyed by
+# the _PRESET_NEEDS vocabulary, plus the "data is here but there is nothing to
+# measure" case that _preset_chk_usable reports.
+_SCORE_NEED_PHRASE = {
+    "election": "Needs election columns",
+    "demographic": "Needs demographic columns",
+    "county": "Needs a {unit} column with 2 or more values",
+    "reference plan": "Needs a reference plan",
+    "": "Nothing to measure on this map",
+}
+
+# Which existing panel each score's "Open chart" button shows:
+# (panel tag, Views-menu item attribute).
+_SCORE_PANELS = {
+    "holistic_compactness": ("panel_hc", "_panel_hc_item"),
+    "polsby_popper": ("panel_pp", "_panel_pp_item"),
+    "reock": ("panel_reock", "_panel_reock_item"),
+    "cut_edges": ("panel_cut_edges", "_panel_cuts_item"),
+    "holistic_splitting": ("panel_hsplit", "_panel_hsplit_item"),
+    "county_splits": ("panel_county_splits", "_panel_cs_item"),
+    "pop_deviation": ("panel_popdev", "_panel_popdev_item"),
+    "alignment": ("panel_alignment", "_panel_alignment_item"),
+    "mean_median": ("panel_mm", "_panel_mm_item"),
+    "efficiency_gap": ("panel_eg", "_panel_eg_item"),
+    "partisan_bias": ("panel_pb", "_panel_pb_item"),
+    "partisan_gini": ("panel_pg", "_panel_pg_item"),
+    "holistic_proportionality": ("panel_hprop", "_panel_hprop_item"),
+    "holistic_competitiveness": ("panel_hcmp", "_panel_hcmp_item"),
+    "dem_seats": ("panel_dem_seats", "_panel_seats_item"),
+    "majority_chance": ("panel_majority", "_panel_majority_item"),
+    "": ("panel_hinge", "_panel_hinge_item"),
+    "representation": ("panel_representation", "_panel_representation_item"),
+    "minority_cohesion": ("panel_minority_cohesion", "_panel_minority_cohesion_item"),
+    "community_congruence": ("panel_community_congruence",
+                             "_panel_community_congruence_item"),
+}
+
+# Goals in screen order, which is not GOALS order in mosaic/goals.py: that tuple
+# also fixes the Score Contributors grouping, so the screen keeps its own.
+_GOAL_ORDER = ("compact", "equal_pop", "counties", "minority",
+               "fairness", "favor_party", "competitive", "continuity")
+
 # ── Layout constants ──────────────────────────────────────────────────────────
 _VP_W         = 1340
+# Three columns: setup/goals/results, the map, and the score list. Spare width
+# goes to the centre; spare height goes to the map.
+_SETUP_W      = 300    # left column (Map, Goals, Results)
+_SCORES_W     = 468    # right column (the 20 score rows)
+_SCORE_NAME_W = 152    # score-row name column, fixed so rows line up
+_SCORE_VAL_W  = 36     # score-row value column ("off", "100")
+_RUN_TILES    = 20     # progress bar tiles under the map
 _VP_H         = 1000
 _LEFT_W       = 440    # fixed left-column width
 _TOP_H        = 640    # fixed top section height (left + right columns)
@@ -599,6 +715,16 @@ __all__ = [
     "_CONTRIB_METRIC_SECTION",
     "_CONTRIB_GOAL_COLORS",
     "_VP_W",
+    "_SETUP_W",
+    "_SCORES_W",
+    "_SCORE_NAME_W",
+    "_SCORE_VAL_W",
+    "_RUN_TILES",
+    "_SCORE_GROUPS",
+    "_SCORE_ROWS",
+    "_SCORE_NEED_PHRASE",
+    "_SCORE_PANELS",
+    "_GOAL_ORDER",
     "_VP_H",
     "_LEFT_W",
     "_TOP_H",

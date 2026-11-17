@@ -263,50 +263,38 @@ class MenuMixin:
     # (section, enabled checkbox, toggle callback, Scores-menu item, row tag,
     #  label). Hinge is absent on purpose; applying a preset turns it off.
     _PRESET_SCORES = (
-        ("cut_edges", "_cut_enabled", "_on_cut_toggle",
-         "_svis_cuts", "score_row_cuts", "Cut Edges"),
-        ("holistic_compactness", "_hc_enabled", "_on_hc_toggle",
-         "_svis_hc", "score_row_hc", "Compactness"),
-        ("polsby_popper", "_pp_enabled", "_on_pp_toggle",
-         "_svis_pp", "score_row_pp", "Polsby-Popper"),
-        ("reock", "_reock_enabled", "_on_reock_toggle",
-         "_svis_reock", "score_row_reock", "Reock"),
+        ("cut_edges", "_cut_enabled", "_on_cut_toggle", "Cut Edges"),
+        ("holistic_compactness", "_hc_enabled", "_on_hc_toggle", "Compactness"),
+        ("polsby_popper", "_pp_enabled", "_on_pp_toggle", "Polsby-Popper"),
+        ("reock", "_reock_enabled", "_on_reock_toggle", "Reock"),
         ("holistic_splitting", "_hsplit_enabled", "_on_hsplit_toggle",
-         "_svis_hsplit", "score_row_hsplit", "County Congruence"),
+         "County Congruence"),
         # After County Congruence, whose toggle turns the bias on.
         ("county_bias", "_county_bias_enabled", "_on_county_bias_toggle",
-         "_svis_countybias", "score_row_countybias", "County-Edge Bias"),
-        ("county_splits", "_cs_enabled", "_on_cs_toggle",
-         "_svis_cs", "score_row_cs", "Classic Splitting"),
+         "County-Edge Bias"),
+        ("county_splits", "_cs_enabled", "_on_cs_toggle", "Classic Splitting"),
         ("pop_deviation", "_popdev_enabled", "_on_popdev_score_toggle",
-         "_svis_popdev", "score_row_popdev", "Population Deviation"),
+         "Population Deviation"),
         ("alignment", "_alignment_enabled", "_on_alignment_toggle",
-         "_svis_alignment", "score_row_alignment", "Plan Continuity"),
-        ("mean_median", "_mm_enabled", "_on_mm_toggle",
-         "_svis_mm", "score_row_mm", "Mean-Median"),
-        ("efficiency_gap", "_eg_enabled", "_on_eg_toggle",
-         "_svis_eg", "score_row_eg", "Efficiency Gap"),
-        ("partisan_bias", "_pb_enabled", "_on_pb_toggle",
-         "_svis_pb", "score_row_pb", "Partisan Bias"),
-        ("partisan_gini", "_pg_enabled", "_on_pg_toggle",
-         "_svis_pg", "score_row_pg", "Partisan Gini"),
+         "Plan Continuity"),
+        ("mean_median", "_mm_enabled", "_on_mm_toggle", "Mean-Median"),
+        ("efficiency_gap", "_eg_enabled", "_on_eg_toggle", "Efficiency Gap"),
+        ("partisan_bias", "_pb_enabled", "_on_pb_toggle", "Partisan Bias"),
+        ("partisan_gini", "_pg_enabled", "_on_pg_toggle", "Partisan Gini"),
         ("holistic_proportionality", "_hprop_enabled", "_on_hprop_toggle",
-         "_svis_hprop", "score_row_hprop", "Proportionality"),
+         "Proportionality"),
         ("holistic_competitiveness", "_hcmp_enabled", "_on_hcmp_toggle",
-         "_svis_hcmp", "score_row_hcmp", "Competitiveness"),
+         "Competitiveness"),
         ("dem_seats", "_seats_enabled", "_on_seats_toggle",
-         "_svis_seats", "score_row_seats", "Expected Dem Seats"),
+         "Expected Dem Seats"),
         ("majority_chance", "_majority_enabled", "_on_majority_toggle",
-         "_svis_majority", "score_row_majority", "Chance of Majority"),
-        ("representation", "_representation_enabled", "_on_representation_toggle",
-         "_svis_representation", "score_row_representation",
-         "Electoral Opportunity"),
+         "Chance of Majority"),
+        ("representation", "_representation_enabled",
+         "_on_representation_toggle", "Electoral Opportunity"),
         ("minority_cohesion", "_minority_cohesion_enabled",
-         "_on_minority_cohesion_toggle", "_svis_minority_cohesion",
-         "score_row_minority_cohesion", "Neighborhood Severance"),
+         "_on_minority_cohesion_toggle", "Neighborhood Severance"),
         ("community_congruence", "_community_congruence_enabled",
-         "_on_community_congruence_toggle", "_svis_community_congruence",
-         "score_row_community_congruence", "Community Dispersion"),
+         "_on_community_congruence_toggle", "Community Dispersion"),
     )
 
     # (section, key, widget attr) for values stored as-is on a widget.
@@ -430,6 +418,7 @@ class MenuMixin:
             dpg.set_value(self._hinge_enabled, False)
             self._on_hinge_toggle()
 
+
         r = self.runner
         have = {
             "election": bool(getattr(r, "election_arrays", None)),
@@ -438,7 +427,7 @@ class MenuMixin:
             "reference plan": getattr(r, "alignment_data", None) is not None,
         }
         missing: list[str] = []
-        for sec, chk, _cb, _svis, _row, lbl in self._PRESET_SCORES:
+        for sec, chk, _cb, lbl in self._PRESET_SCORES:
             want = p[sec]["enabled"]
             need = self._PRESET_NEEDS.get(sec)
             gap = None
@@ -482,15 +471,14 @@ class MenuMixin:
 
     def _preset_set_enabled(self, sec: str, on: bool) -> None:
         """Set one score's checkbox; fire its toggle only on a change, since
-        some toggles have side effects (County Congruence turns on county bias)."""
-        for s, chk, cb, svis, row, _ in self._PRESET_SCORES:
+        some toggles have side effects (County Congruence turns on county bias).
+
+        Every score is listed at all times now, so there is no hidden row to
+        reveal first."""
+        for s, chk, cb, _lbl in self._PRESET_SCORES:
             if s != sec:
                 continue
             item = getattr(self, chk)
-            if on:
-                # A hidden row would force the score back off; reveal it.
-                dpg.set_value(getattr(self, svis), True)
-                dpg.configure_item(row, show=True)
             if bool(dpg.get_value(item)) != on:
                 dpg.set_value(item, on)
                 getattr(self, cb)()

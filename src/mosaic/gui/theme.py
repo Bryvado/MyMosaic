@@ -200,7 +200,10 @@ _MODERN_SPACING = Spacing(
     item_spacing=(8, 5),
     item_inner_spacing=(5, 4),
     window_padding=(10, 10),
-    frame_border_size=0.0,      # bg contrast carries inputs
+    # 1px on inputs. frame_bg sits 1.3:1 against child_bg in dark and 1.1:1 in
+    # light, far under the 3:1 a control boundary needs, so the fill alone left
+    # fields, slider tracks and unchecked boxes hard to pick out (audit.md).
+    frame_border_size=1.0,
     child_border_size=1.0,
     window_border_size=0.0,
     popup_border_size=1.0,
@@ -523,6 +526,7 @@ class ThemeManager:
         self._body_fonts: dict[str, int] = {}
         # (item_tag, token_name) for every tracked text widget
         self._tracked: list[tuple[int | str, str]] = []
+        self._value_font: int | None = None   # lazily registered title-size font
 
     # ── Build (call after dpg.create_context()) ───────────────────────────────
 
@@ -534,6 +538,21 @@ class ThemeManager:
             self._nudge_themes[name] = _build_nudge_theme(p, nudge=True)
             self._antinudge_themes[name] = _build_nudge_theme(p, nudge=False)
             self._body_fonts[name] = self._register_font(p.typography)
+
+    def value_font(self) -> int:
+        """Font tag for the `title` type style, used by big-number readouts.
+
+        ThemeManager registers one body font per palette. Stat tiles need the
+        20px semibold `title` style for their value, so it is registered once
+        here rather than per caller; 0 means the file was missing and the
+        caller should leave the default font bound.
+        """
+        if self._value_font is None:
+            self._value_font = 0
+            if _INTER_SEMIBOLD.exists():
+                with dpg.font_registry():
+                    self._value_font = dpg.add_font(str(_INTER_SEMIBOLD), 20)
+        return self._value_font
 
     def _register_font(self, typo: Typography) -> int:
         """Register the body font from a Typography spec; 0 if default."""

@@ -1,5 +1,4 @@
-"""Builds the main two-column window layout (one large builder)."""
-from mosaic.gui.choice_radio import choice_radio
+"""Builds the main three-column window layout (one large builder)."""
 from mosaic.gui.map_navigation import MAX_ZOOM
 
 from ._common import (
@@ -9,14 +8,13 @@ from ._common import (
     _FILL_NONE,
     _HALF_PLOT_H,
     _HALF_PLOT_W,
-    _LEFT_GAP,
-    _LEFT_W,
     _MAP_DH,
     _MAP_DW,
     _MAP_H,
     _MIN_CLIENT_W,
-    _SCORE_COL_W,
-    _TOP_H,
+    _RUN_TILES,
+    _SCORES_W,
+    _SETUP_W,
     _VP_H,
     _VP_W,
     MapView,
@@ -27,7 +25,6 @@ from ._common import (
     np,
 )
 
-_SCORE_MIN_H = 80
 _STARTUP_W = 1300
 
 
@@ -49,7 +46,7 @@ def _initial_viewport_bounds():
 
 
 class SetupMixin:
-    """Builds the main two-column window layout (one large builder)."""
+    """Builds the main three-column window layout (one large builder)."""
 
     def setup(self):
         # On Windows the taskbar groups by host process (python.exe) unless an
@@ -124,6 +121,7 @@ class SetupMixin:
         self._build_representation_popup()
         self._build_alignment_settings_popup()
         self._build_help_popup()
+        self._build_run_details_popup()
         self._build_temperature_panel()
         self._build_score_contrib_panel()
         self._build_ref_line_themes()
@@ -151,7 +149,6 @@ class SetupMixin:
         self._build_hinge_panel()
         self._build_district_info_panel()
         self._build_phase_panel()
-        self._build_goals_panel()
 
         # ── Main window ───────────────────────────────────────────────────────
         # The page may scroll on short displays. Map children block wheel
@@ -209,13 +206,6 @@ class SetupMixin:
                     )
 
                 with dpg.menu(label="Configuration"):
-                    self._panel_goals_item = dpg.add_menu_item(
-                        label="Goals...", check=True, default_value=False,
-                        callback=lambda: dpg.configure_item(
-                            "panel_goals",
-                            show=dpg.get_value(self._panel_goals_item)),
-                    )
-                    dpg.add_separator()
                     dpg.add_menu_item(
                         label="Population...",
                         callback=lambda: dpg.configure_item(
@@ -284,158 +274,6 @@ class SetupMixin:
                 # order: geography | misc | partisanship | demographics. Views
                 # omits County-Edge Bias (not a score chart) and appends panels
                 # with no score row, such as Temperature and District Info.
-                with dpg.menu(label="Scores", tag="menu_scores"):
-                    # Off, the list below is filtered to scores that are on or
-                    # that an active goal drives; on, it is today's full list.
-                    self._svis_advanced = dpg.add_menu_item(
-                        label="Advanced: show all scores", check=True,
-                        default_value=False,
-                        callback=lambda: self._on_advanced_scores("menu"),
-                    )
-                    dpg.add_separator()
-                    # ── Geography ──
-                    self._svis_cuts = dpg.add_menu_item(
-                        label="Cut Edges", check=True, default_value=False,
-                        callback=lambda: self._set_score_row_vis(
-                            "score_row_cuts", dpg.get_value(self._svis_cuts),
-                            self._cut_enabled, self._on_cut_toggle),
-                    )
-                    self._svis_hc = dpg.add_menu_item(
-                        label="Compactness", check=True, default_value=True,
-                        callback=lambda: self._set_score_row_vis(
-                            "score_row_hc", dpg.get_value(self._svis_hc),
-                            self._hc_enabled, self._on_hc_toggle),
-                    )
-                    self._svis_pp = dpg.add_menu_item(
-                        label="Polsby-Popper", check=True, default_value=False,
-                        callback=lambda: self._set_score_row_vis(
-                            "score_row_pp", dpg.get_value(self._svis_pp),
-                            self._pp_enabled, self._on_pp_toggle),
-                    )
-                    self._svis_reock = dpg.add_menu_item(
-                        label="Reock", check=True, default_value=False,
-                        callback=lambda: self._set_score_row_vis(
-                            "score_row_reock", dpg.get_value(self._svis_reock),
-                            self._reock_enabled, self._on_reock_toggle),
-                    )
-                    dpg.add_separator()
-                    # ── Misc: county, population, least-change ──
-                    self._svis_hsplit = dpg.add_menu_item(
-                        label="County Congruence", check=True, default_value=True,
-                        callback=lambda: self._set_score_row_vis(
-                            "score_row_hsplit", dpg.get_value(self._svis_hsplit),
-                            self._hsplit_enabled, self._on_hsplit_toggle),
-                    )
-                    # Move bias, not a score -- listed beside County Congruence
-                    # because that is the score it pairs with.
-                    self._svis_countybias = dpg.add_menu_item(
-                        label="County-Edge Bias", check=True, default_value=False,
-                        callback=lambda: self._set_score_row_vis(
-                            "score_row_countybias",
-                            dpg.get_value(self._svis_countybias),
-                            self._county_bias_enabled, self._on_county_bias_toggle),
-                    )
-                    self._svis_cs = dpg.add_menu_item(
-                        label="Classic Splitting", check=True, default_value=False,
-                        callback=lambda: self._set_score_row_vis(
-                            "score_row_cs", dpg.get_value(self._svis_cs),
-                            self._cs_enabled, self._on_cs_toggle),
-                    )
-                    self._svis_popdev = dpg.add_menu_item(
-                        label="Population Deviation", check=True, default_value=False,
-                        callback=lambda: self._set_score_row_vis(
-                            "score_row_popdev", dpg.get_value(self._svis_popdev),
-                            self._popdev_enabled, self._on_popdev_score_toggle),
-                    )
-                    self._svis_alignment = dpg.add_menu_item(
-                        label="Plan Continuity", check=True, default_value=False,
-                        callback=lambda: self._set_score_row_vis(
-                            "score_row_alignment", dpg.get_value(self._svis_alignment),
-                            self._alignment_enabled, self._on_alignment_toggle),
-                    )
-                    dpg.add_separator()
-                    # ── Partisanship ──
-                    self._svis_mm = dpg.add_menu_item(
-                        label="Mean-Median", check=True, default_value=False,
-                        callback=lambda: self._set_score_row_vis(
-                            "score_row_mm", dpg.get_value(self._svis_mm),
-                            self._mm_enabled, self._on_mm_toggle),
-                    )
-                    self._svis_eg = dpg.add_menu_item(
-                        label="Efficiency Gap", check=True, default_value=False,
-                        callback=lambda: self._set_score_row_vis(
-                            "score_row_eg", dpg.get_value(self._svis_eg),
-                            self._eg_enabled, self._on_eg_toggle),
-                    )
-                    self._svis_pb = dpg.add_menu_item(
-                        label="Partisan Bias", check=True, default_value=False,
-                        callback=lambda: self._set_score_row_vis(
-                            "score_row_pb", dpg.get_value(self._svis_pb),
-                            self._pb_enabled, self._on_pb_toggle),
-                    )
-                    self._svis_pg = dpg.add_menu_item(
-                        label="Partisan Gini", check=True, default_value=False,
-                        callback=lambda: self._set_score_row_vis(
-                            "score_row_pg", dpg.get_value(self._svis_pg),
-                            self._pg_enabled, self._on_pg_toggle),
-                    )
-                    self._svis_hprop = dpg.add_menu_item(
-                        label="Proportionality", check=True, default_value=True,
-                        callback=lambda: self._set_score_row_vis(
-                            "score_row_hprop", dpg.get_value(self._svis_hprop),
-                            self._hprop_enabled, self._on_hprop_toggle),
-                    )
-                    self._svis_hcmp = dpg.add_menu_item(
-                        label="Competitiveness", check=True, default_value=True,
-                        callback=lambda: self._set_score_row_vis(
-                            "score_row_hcmp", dpg.get_value(self._svis_hcmp),
-                            self._hcmp_enabled, self._on_hcmp_toggle),
-                    )
-                    self._svis_seats = dpg.add_menu_item(
-                        label="Expected Dem Seats", check=True, default_value=False,
-                        callback=lambda: self._set_score_row_vis(
-                            "score_row_seats", dpg.get_value(self._svis_seats),
-                            self._seats_enabled, self._on_seats_toggle),
-                    )
-                    self._svis_majority = dpg.add_menu_item(
-                        label="Chance of Majority", check=True, default_value=False,
-                        callback=lambda: self._set_score_row_vis(
-                            "score_row_majority", dpg.get_value(self._svis_majority),
-                            self._majority_enabled, self._on_majority_toggle),
-                    )
-                    self._svis_hinge = dpg.add_menu_item(
-                        label="Supermajority/Hinge", check=True, default_value=False,
-                        callback=lambda: self._set_score_row_vis(
-                            "score_row_hinge", dpg.get_value(self._svis_hinge),
-                            self._hinge_enabled, self._on_hinge_toggle),
-                    )
-                    dpg.add_separator()
-                    # ── Demographics ──
-                    self._svis_representation = dpg.add_menu_item(
-                        label="Electoral Opportunity", check=True, default_value=True,
-                        callback=lambda: self._set_score_row_vis(
-                            "score_row_representation",
-                            dpg.get_value(self._svis_representation),
-                            self._representation_enabled, self._on_representation_toggle),
-                    )
-                    self._svis_minority_cohesion = dpg.add_menu_item(
-                        label="Neighborhood Severance", check=True, default_value=False,
-                        callback=lambda: self._set_score_row_vis(
-                            "score_row_minority_cohesion",
-                            dpg.get_value(self._svis_minority_cohesion),
-                            self._minority_cohesion_enabled,
-                            self._on_minority_cohesion_toggle),
-                    )
-                    self._svis_community_congruence = dpg.add_menu_item(
-                        label="Community Dispersion", check=True,
-                        default_value=True,
-                        callback=lambda: self._set_score_row_vis(
-                            "score_row_community_congruence",
-                            dpg.get_value(self._svis_community_congruence),
-                            self._community_congruence_enabled,
-                            self._on_community_congruence_toggle),
-                    )
-
                 with dpg.menu(label="Views"):
                     # ── Geography ── (mirrors the Scores menu 1:1)
                     self._panel_cuts_item = dpg.add_menu_item(
@@ -624,912 +462,140 @@ class SetupMixin:
                         "Choose the rule used to assign district numbers.",
                     )
 
-            with dpg.group(tag="main_top_controls"), dpg.child_window(
-                    width=-1, height=_TOP_H, border=False, tag="top_section",
-                    no_scrollbar=True):
-                with dpg.group(horizontal=True):
+            # ── Three columns: setup, map, scores ─────────────────────────
+            # The order a person works in: say what map and what goals, watch
+            # the run, then reach for an individual score. Spare width goes to
+            # the centre, spare height to the map.
+            with dpg.group(horizontal=True, tag="main_columns"):
 
-                    # ── Left column ───────────────────────────────────────────
-                    # Long filenames and warnings may require vertical scrolling.
-                    with dpg.child_window(width=_LEFT_W, border=False,
-                                          tag="run_controls"):
-
-                        self.theme.text("Load Shapefile", "heading")
+                # ── Left: Map, Goals, Results ─────────────────────────────
+                with dpg.child_window(width=_SETUP_W, border=False,
+                                      tag="setup_column"):
+                    with dpg.child_window(width=-1, height=214, border=True,
+                                          tag="panel_map_setup"):
+                        with dpg.group(horizontal=True):
+                            self.theme.text("Map", "heading")
+                            dpg.add_spacer(width=_SETUP_W - 176)
+                            dpg.add_button(
+                                label="Open shapefile\u2026", width=130,
+                                callback=self._on_import_shapefile,
+                            )
                         dpg.add_separator()
-                        dpg.add_button(
-                            label="Open Shapefile...",
-                            callback=self._on_import_shapefile,
-                            width=_LEFT_W - 20,
-                        )
-                        self._shp_info = self.theme.text(
-                            "No shapefile loaded", "muted", wrap=_LEFT_W - 44,
-                        )
-                        self._build_start_status_row()
-
-                        dpg.add_spacer(height=_LEFT_GAP)
-                        self.theme.text("Run Parameters", "heading")
-                        dpg.add_separator()
-                        _inp_w = (_LEFT_W - 24) // 2
+                        self._build_setup_line(
+                            "Loaded", lambda: self.theme.text(
+                                "no map", "muted"), "_shp_info")
+                        self._build_setup_line(
+                            "Start from", lambda: self.theme.text(
+                                "Random partition", "body"), "_hot_start_info")
+                        self._start_mode_tooltip = None
+                        # The "county" column can hold any place unit; its name
+                        # follows into the goal and the score phrases.
+                        self._build_setup_line(
+                            "Places are", lambda: dpg.add_input_text(
+                                default_value=self._place_unit, width=150,
+                                callback=self._on_place_unit_change),
+                            "_place_unit_input")
+                        self._tooltip(
+                            self._place_unit_input,
+                            "What the column you loaded as \"county\" actually "
+                            "holds. Redistricting one county with city names in "
+                            "that column? Set this to \"cities\" and the goal "
+                            "reads \"Keep cities whole\". Wording only -- the "
+                            "score and its settings do not change.")
+                        _inp_w = (_SETUP_W - 36) // 2
                         with dpg.group(horizontal=True):
                             with dpg.group():
                                 self.theme.text("Districts", "subheading")
                                 self._num_districts = dpg.add_input_int(
-                                    label="##dist",
-                                    default_value=5, min_value=2, max_value=500,
-                                    # Clamp typed values as well as spinner input.
+                                    label="##dist", default_value=5,
+                                    min_value=2, max_value=500,
                                     min_clamped=True, max_clamped=True,
                                     width=_inp_w, step=0,
                                     callback=self._on_num_districts_change,
                                 )
-                                self._tooltip(
-                                    self._num_districts,
-                                    "Number of districts in the plan.",
-                                )
+                                self._tooltip(self._num_districts,
+                                              "Number of districts in the plan.")
                             with dpg.group():
                                 self.theme.text("Iterations", "subheading")
                                 self._iterations = dpg.add_input_int(
-                                    label="##iter",
-                                    default_value=5000, min_value=1,
-                                    max_value=1_000_000,
+                                    label="##iter", default_value=5000,
+                                    min_value=1, max_value=1_000_000,
                                     width=_inp_w, step=0,
                                 )
                                 self._tooltip(
                                     self._iterations,
-                                    "Maximum number of proposed map changes. More "
-                                    "iterations take longer but do not guarantee a better map.",
-                                )
+                                    "Maximum number of proposed map changes. "
+                                    "More iterations take longer but do not "
+                                    "guarantee a better map.")
 
-                        dpg.add_spacer(height=_LEFT_GAP)
-                        self.theme.text("Controls", "heading")
+                    dpg.add_spacer(height=8)
+                    with dpg.child_window(width=-1, height=322, border=True,
+                                          tag="panel_goals"):
+                        self._build_goals_column()
+
+                    dpg.add_spacer(height=8)
+                    with dpg.child_window(width=-1, height=-1, border=True,
+                                          tag="panel_results"):
+                        self.theme.text("Results", "heading")
                         dpg.add_separator()
-                        _btn_w = (_LEFT_W - 30) // 2
+                        self._build_result_tiles()
+                        dpg.add_spacer(height=6)
+                        dpg.add_button(label="Run details\u2026", width=-1,
+                                       callback=lambda: dpg.configure_item(
+                                           "popup_run_details", show=True))
+
+                # ── Centre: map toolbar, map, run strip ───────────────────
+                with dpg.child_window(width=-1, border=False,
+                                      no_scrollbar=True, tag="map_column"):
+                    self._build_map_toolbar()
+                    with dpg.child_window(
+                        height=_MAP_H, width=-1, border=True,
+                        tag="map_container", no_scrollbar=True,
+                        no_scroll_with_mouse=True,
+                    ):
+                        # The spacer centres the map when it is narrower than
+                        # the box (see MapMixin._sync_map_size).
                         with dpg.group(horizontal=True):
-                            self._run_btn = dpg.add_button(
-                                label="Start", callback=self._on_run,
-                                width=_btn_w,
-                            )
-                            self._pause_btn = dpg.add_button(
-                                label="Pause", callback=self._on_pause,
-                                width=_btn_w, enabled=False,
-                            )
-                        with dpg.group(horizontal=True):
-                            self._reset_btn = dpg.add_button(
-                                label="Reset", callback=self._on_reset,
-                                width=_btn_w,
-                            )
-                            self._revert_btn = dpg.add_button(
-                                label="Revert to Best",
-                                callback=self._on_revert_to_best,
-                                width=_btn_w, enabled=False,
-                            )
-                        self._tooltip(
-                            self._reset_btn,
-                            "Clear the current run and charts but keep the loaded "
-                            "shapefile and settings.",
-                        )
-                        self._tooltip(
-                            self._revert_btn,
-                            "Return to the lowest-score accepted map and its run state.",
-                        )
-                        with dpg.group(horizontal=True):
-                            self._export_btn = dpg.add_button(
-                                label="Quick Save",
-                                callback=self._on_export,
-                                width=_btn_w, enabled=False,
-                            )
-                            self._metrics_btn = dpg.add_button(
-                                label="Save Metrics",
-                                callback=self._on_export_metrics,
-                                width=_btn_w, enabled=False,
-                            )
-                        self._tooltip(
-                            self._export_btn,
-                            "Save current map-unit assignments as a CSV in output.",
-                        )
-                        self._tooltip(
-                            self._metrics_btn,
-                            "Save current district-level metrics as a CSV in output.",
-                        )
+                            dpg.add_spacer(width=1, tag="map_center_pad",
+                                           show=False)
+                            self._build_map_canvas()
+                    dpg.add_spacer(height=6)
+                    self._build_run_strip()
+                    dpg.add_spacer(height=6)
+                    # Score and Entropy keep their place under the run strip
+                    # until step 3 turns them into Visuals cards.
+                    with dpg.group(horizontal=True, tag="main_charts"):
+                        with dpg.group():
+                            self._hint(self.theme.text("Score", "heading"),
+                                       "score")
+                            with dpg.plot(height=_HALF_PLOT_H,
+                                          tag="score_half_plot",
+                                          width=_HALF_PLOT_W, no_menus=True):
+                                dpg.add_plot_legend()
+                                dpg.add_plot_axis(dpg.mvXAxis, label="Iteration",
+                                                  tag="score_x")
+                                with dpg.plot_axis(dpg.mvYAxis, label="Score",
+                                                   tag="score_y"):
+                                    dpg.add_line_series([], [], label="Score",
+                                                        tag="score_series")
+                        with dpg.group():
+                            self._hint(self.theme.text("Entropy", "heading"),
+                                       "entropy")
+                            with dpg.plot(height=_HALF_PLOT_H, width=-1,
+                                          no_menus=True,
+                                          tag="entropy_half_plot"):
+                                dpg.add_plot_legend()
+                                dpg.add_plot_axis(dpg.mvXAxis, label="Iteration",
+                                                  tag="acc_x")
+                                with dpg.plot_axis(dpg.mvYAxis, label="Rate (%)",
+                                                   tag="acc_y"):
+                                    dpg.add_line_series([], [], label="Accepted",
+                                                        tag="acc_series")
 
-                        dpg.add_spacer(height=_LEFT_GAP)
-                        self.theme.text("Status", "heading")
-                        dpg.add_separator()
-                        self._status_txt = dpg.add_text("Status: Idle", wrap=_LEFT_W - 44)
-                        self._iter_txt   = dpg.add_text("Iteration: 0 / 0")
-                        # Timer readout as a fixed 3-column table. width=-1 fills
-                        # the panel and SizingStretchSame splits it into equal
-                        # columns by WIDTH, not content -- so a value gaining a
-                        # digit clips inside its own column instead of shoving the
-                        # neighbours (flicker-free, no mono font). Thin gray
-                        # dividers via borders_innerV (theme table_border_light).
-                        with dpg.theme() as _timer_theme:
-                            with dpg.theme_component(dpg.mvTable):
-                                dpg.add_theme_style(
-                                    dpg.mvStyleVar_CellPadding, 9, 3,
-                                    category=dpg.mvThemeCat_Core)
-                        with dpg.table(
-                            header_row=False, borders_innerH=False,
-                            borders_outerH=False, borders_innerV=True,
-                            borders_outerV=False, width=-1,
-                            policy=dpg.mvTable_SizingStretchSame,
-                        ) as _timer_table:
-                            dpg.add_table_column()
-                            dpg.add_table_column()
-                            dpg.add_table_column()
-                            with dpg.table_row():
-                                self._time_txt = dpg.add_text("Time: 0:00")
-                                self._ips_txt  = dpg.add_text("Iter/sec: 0.0")
-                                self._eta_txt  = dpg.add_text("Est. left: --")
-                        dpg.bind_item_theme(_timer_table, _timer_theme)
-                        self._progress   = dpg.add_progress_bar(
-                            default_value=0.0, width=_LEFT_W - 30,
-                        )
-                        dpg.add_spacer(height=4)
-                        # Two equal columns: score/best/temperature on the left,
-                        # entropy/accepted/flip on the right. width=-1 + StretchSame
-                        # fixes the divider at the halfway mark regardless of text.
-                        # The bound theme widens CellPadding so the thin gray inner
-                        # border (borders_innerV, theme table_border_light) has
-                        # breathing room before the right-hand column.
-                        with dpg.theme() as _stats_theme:
-                            with dpg.theme_component(dpg.mvTable):
-                                dpg.add_theme_style(
-                                    dpg.mvStyleVar_CellPadding, 12, 3,
-                                    category=dpg.mvThemeCat_Core)
-                        with dpg.table(
-                            header_row=False, borders_innerH=False,
-                            borders_outerH=False, borders_innerV=True,
-                            borders_outerV=False, width=-1,
-                            policy=dpg.mvTable_SizingStretchSame,
-                            tag="left_stats_table") as _stats_table:
-                            dpg.add_table_column()
-                            dpg.add_table_column()
-                            with dpg.table_row():
-                                self._score_txt = dpg.add_text("Score: --")
-                                self._acc_txt   = dpg.add_text("Entropy: --")
-                            with dpg.table_row():
-                                self._best_txt  = dpg.add_text(
-                                    "Best:  --   (iter. --)")
-                                self._succ_txt  = dpg.add_text(
-                                    "Accepted steps: --")
-                            with dpg.table_row():
-                                self._temp_txt  = dpg.add_text("Temperature: --")
-                                self._flip_txt  = dpg.add_text("Flip rate: 0.0%")
-                        dpg.bind_item_theme(_stats_table, _stats_theme)
-
-                    # ── Right column (map + plots) ────────────────────────────
-                    with dpg.child_window(width=-1, border=False,
-                                          no_scrollbar=True):
-
-                        map_heading = self.theme.text(
-                            "District Map", "heading", tag="map_heading")
-                        self._tooltip(
-                            map_heading,
-                            "Scroll to zoom. Drag to pan. Double-click to show the full map.",
-                        )
-                        with dpg.child_window(
-                            height=_MAP_H, width=-1, border=True,
-                            tag="map_container", no_scrollbar=True,
-                            no_scroll_with_mouse=True,
-                        ):
-                            # The spacer centres the map when it is narrower
-                            # than the box (see MapMixin._sync_map_size).
-                            with dpg.group(horizontal=True):
-                                dpg.add_spacer(width=1, tag="map_center_pad", show=False)
-                                self._build_map_canvas()
-                        # The fill combo selects one body color mode. Overlay
-                        # checkboxes add decorations; the stretch table column
-                        # keeps the image-save controls against the right edge.
-                        with dpg.theme() as _toolbar_theme:
-                            with dpg.theme_component(dpg.mvTable):
-                                dpg.add_theme_style(
-                                    dpg.mvStyleVar_CellPadding, 4, 1,
-                                    category=dpg.mvThemeCat_Core)
-                        with dpg.table(
-                            header_row=False, borders_innerH=False,
-                            borders_outerH=False, borders_innerV=False,
-                            borders_outerV=False, width=-1,
-                            policy=dpg.mvTable_SizingFixedFit,
-                        ) as map_toolbar:
-                            dpg.add_table_column(width_fixed=True)   # fill
-                            dpg.add_table_column(width_fixed=True)   # overlays
-                            dpg.add_table_column(width_stretch=True,
-                                                 init_width_or_weight=1.0)
-                            dpg.add_table_column(width_fixed=True)   # photo
-                            with dpg.table_row():
-                                with dpg.group(horizontal=True):
-                                    self.theme.text("Fill:", "muted", tag="map_fill_label")
-                                    self._fill_combo = dpg.add_combo(
-                                        items=self._fill_labels(),
-                                        default_value=_FILL_NONE,
-                                        width=225, callback=self._on_fill_combo,
-                                    )
-                                    self._tooltip(
-                                        self._fill_combo,
-                                        "Color the map by one measure. Unavailable "
-                                        "choices show which data they require.",
-                                    )
-                                with dpg.group(horizontal=True, tag="map_overlay_controls"):
-                                    self.theme.text("Overlay:", "muted")
-                                    self._county_overlay = dpg.add_checkbox(
-                                        label="County", default_value=False,
-                                        callback=self._on_county_overlay_toggle,
-                                    )
-                                    self._tooltip(
-                                        self._county_overlay,
-                                        "Draw county boundaries over the map.")
-                                    self._precinct_overlay = dpg.add_checkbox(
-                                        label="Precinct", default_value=False,
-                                        callback=self._on_precinct_overlay_toggle,
-                                    )
-                                    self._tooltip(
-                                        self._precinct_overlay,
-                                        "Draw precinct boundaries over the map.")
-                                    self._show_labels = dpg.add_checkbox(
-                                        label="Labels", default_value=False,
-                                        callback=self._on_labels_toggle,
-                                    )
-                                    self._tooltip(
-                                        self._show_labels,
-                                        "Show district numbers.")
-                                    self._splits_view = dpg.add_checkbox(
-                                        label="Splits", default_value=False,
-                                        enabled=False,
-                                        callback=self._on_splits_view_toggle,
-                                    )
-                                    self._tooltip(
-                                        self._splits_view,
-                                        "Highlight counties assigned to more than "
-                                        "one district. Requires a county column.",
-                                    )
-                                dpg.add_spacer(width=1)
-                                with dpg.group(horizontal=True, tag="map_save_controls"):
-                                    self._cam_btn = cam_btn = dpg.add_image_button(
-                                        "camera_icon_texture",
-                                        callback=self._on_save_map,
-                                        width=13, height=13,
-                                    )
-                                    with dpg.tooltip(cam_btn):
-                                        dpg.add_text(
-                                            "Save a PNG of the full map.")
-                                    self._more_btn = more_btn = dpg.add_button(
-                                        label="Export",
-                                        callback=self._on_advanced_save_open,
-                                    )
-                                    with dpg.tooltip(more_btn):
-                                        dpg.add_text(
-                                            "Save the full map as PNG or PDF.")
-                                    self._save_spinner = dpg.add_loading_indicator(
-                                        style=0, radius=2.0, show=False,
-                                        color=self.theme.color("body"),
-                                        secondary_color=self.theme.color("muted"),
-                                    )
-                                    # Breathing room so Export isn't
-                                    # flush against the map's right border.
-                                    dpg.add_spacer(width=4)
-                        dpg.bind_item_theme(map_toolbar, _toolbar_theme)
-                        if self._small_font:
-                            dpg.bind_item_font(map_toolbar, self._small_font)
-
-                        dpg.add_spacer(height=4)
-
-                        with dpg.group(horizontal=True):
-                            with dpg.group():
-                                self._hint(self.theme.text("Score", "heading"), "score")
-                                with dpg.plot(height=_HALF_PLOT_H, tag="score_half_plot",
-                                              width=_HALF_PLOT_W, no_menus=True):
-                                    dpg.add_plot_legend()
-                                    dpg.add_plot_axis(dpg.mvXAxis,
-                                                      label="Iteration",
-                                                      tag="score_x")
-                                    with dpg.plot_axis(dpg.mvYAxis,
-                                                       label="Score",
-                                                       tag="score_y"):
-                                        dpg.add_line_series(
-                                            [], [], label="Score",
-                                            tag="score_series")
-                            with dpg.group():
-                                self._hint(self.theme.text(
-                                    "Entropy", "heading"), "entropy")
-                                with dpg.plot(height=_HALF_PLOT_H, width=-1, no_menus=True,
-                                              tag="entropy_half_plot"):
-                                    dpg.add_plot_legend()
-                                    dpg.add_plot_axis(dpg.mvXAxis,
-                                                      label="Iteration",
-                                                      tag="acc_x")
-                                    with dpg.plot_axis(dpg.mvYAxis,
-                                                       label="Rate (%)",
-                                                       tag="acc_y"):
-                                        dpg.add_line_series(
-                                            [], [], label="Accepted",
-                                            tag="acc_series")
-
-            # ── Score panel (bottom) ──────────────────────────────────────────
-            # Scores absorb vertical resizing while the map/controls stay fixed.
-            # Page scrolling is a fallback when even a small score area cannot fit.
-            with dpg.group(tag="main_score_controls"), dpg.child_window(
-                    width=-1, height=_SCORE_MIN_H, border=True, tag="score_panel"):
-                with dpg.group(horizontal=True):
-                    self.theme.text("Set priorities in Goals, or tune any score here",
-                                    "muted")
-                    dpg.add_spacer(width=12)
-                    dpg.add_button(
-                        label="Goals >>",
-                        callback=lambda: self._show_panel(
-                            "panel_goals", self._panel_goals_item),
-                    )
-                    dpg.add_button(
-                        label="Score Contributors >>",
-                        callback=lambda: self._show_panel(
-                            "panel_score_contrib", self._panel_contrib_item),
-                    )
-                dpg.add_separator()
-                with dpg.group(horizontal=True):
-
-                    # Default scores lead each column; optional scores follow.
-                    with dpg.child_window(width=_SCORE_COL_W, height=-1,
-                                          border=False, tag="score_column_left"):
-                        with dpg.group(tag="score_row_hc", show=True):
-                            with dpg.group(horizontal=True):
-                                self._hc_enabled = dpg.add_checkbox(
-                                    default_value=True,
-                                    callback=self._on_hc_toggle,
-                                )
-                                self._hc_lbl = self.theme.text(
-                                    "Compactness", "accent_green",
-                                )
-                                self._hint(self._hc_lbl, "holistic_compactness")
-                                dpg.add_button(label="↗", width=24,
-                                    callback=lambda: self._show_panel(
-                                        "panel_hc", self._panel_hc_item))
-                            with dpg.group(tag="hc_controls", show=True):
-                                self._w_holistic_compactness = dpg.add_slider_int(
-                                    label="Weight",
-                                    default_value=50, min_value=0, max_value=100,
-                                    width=-75,
-                                )
-                            dpg.add_spacer(height=4)
-
-                        with dpg.group(tag="score_row_hsplit", show=True):
-                            with dpg.group(horizontal=True):
-                                self._hsplit_enabled = dpg.add_checkbox(
-                                    default_value=False,
-                                    callback=self._on_hsplit_toggle,
-                                )
-                                self._hsplit_lbl = self.theme.text(
-                                    "County Congruence", "disabled",
-                                )
-                                self._hint(self._hsplit_lbl, "holistic_splitting")
-                                dpg.add_button(label="↗", width=24,
-                                    callback=lambda: self._show_panel(
-                                        "panel_hsplit", self._panel_hsplit_item))
-                            with dpg.group(tag="hsplit_controls", show=False):
-                                self._w_holistic_splitting = dpg.add_slider_int(
-                                    label="Weight",
-                                    default_value=25, min_value=0, max_value=100,
-                                    width=-75,
-                                )
-                            dpg.add_spacer(height=4)
-
-                        # A MOVE bias, not a score: no weight, not in the objective
-                        # -- it reweights cross-county cut-edge selection. Own row
-                        # so it stays visible and clearable when County Congruence
-                        # is off.
-                        with dpg.group(tag="score_row_countybias", show=False):
-                            with dpg.group(horizontal=True):
-                                self._county_bias_enabled = dpg.add_checkbox(
-                                    default_value=False,
-                                    callback=self._on_county_bias_toggle,
-                                )
-                                self._county_bias_lbl = self.theme.text(
-                                    "County-Edge Bias", "disabled",
-                                )
-                                self._hint(self._county_bias_lbl, "county_edge_bias")
-                            with dpg.group(tag="county_bias_controls", show=False):
-                                self._county_bias = dpg.add_slider_int(
-                                    label="Factor",
-                                    default_value=5, min_value=1, max_value=20,
-                                    width=-75,
-                                )
-                            dpg.add_spacer(height=4)
-
-                        with dpg.group(tag="score_row_cuts", show=False):
-                            with dpg.group(horizontal=True):
-                                self._cut_enabled = dpg.add_checkbox(
-                                    default_value=False,
-                                    callback=self._on_cut_toggle,
-                                )
-                                self._cut_lbl = self.theme.text(
-                                    "Cut Edges", "accent_green",
-                                )
-                                self._hint(self._cut_lbl, "cut_edges")
-                                dpg.add_button(label="↗", width=24,
-                                    callback=lambda: self._show_panel(
-                                        "panel_cut_edges", self._panel_cuts_item))
-                            with dpg.group(tag="cut_edge_controls", show=False):
-                                self._w_cut_edges = dpg.add_slider_int(
-                                    label="Weight",
-                                    default_value=1, min_value=0, max_value=100,
-                                    width=-75,
-                                )
-                            dpg.add_spacer(height=4)
-
-                        with dpg.group(tag="score_row_pp", show=False):
-                            with dpg.group(horizontal=True):
-                                self._pp_enabled = dpg.add_checkbox(
-                                    default_value=False,
-                                    callback=self._on_pp_toggle,
-                                )
-                                self._pp_lbl = self.theme.text(
-                                    "Polsby-Popper", "secondary",
-                                )
-                                self._hint(self._pp_lbl, "compactness")
-                                dpg.add_button(label="↗", width=24,
-                                    callback=lambda: self._show_panel(
-                                        "panel_pp", self._panel_pp_item))
-                            with dpg.group(tag="pp_controls", show=False):
-                                self._w_polsby_popper = dpg.add_slider_int(
-                                    label="Weight",
-                                    default_value=25, min_value=0, max_value=100,
-                                    width=-75,
-                                )
-                            dpg.add_spacer(height=4)
-
-                        with dpg.group(tag="score_row_reock", show=False):
-                            with dpg.group(horizontal=True):
-                                self._reock_enabled = dpg.add_checkbox(
-                                    default_value=False,
-                                    callback=self._on_reock_toggle,
-                                )
-                                self._reock_lbl = self.theme.text(
-                                    "Reock", "secondary",
-                                )
-                                self._hint(self._reock_lbl, "reock")
-                                dpg.add_button(label="↗", width=24,
-                                    callback=lambda: self._show_panel(
-                                        "panel_reock", self._panel_reock_item))
-                            with dpg.group(tag="reock_controls", show=False):
-                                self._w_reock = dpg.add_slider_int(
-                                    label="Weight",
-                                    default_value=25, min_value=0, max_value=100,
-                                    width=-75,
-                                )
-                            dpg.add_spacer(height=4)
-
-                        with dpg.group(tag="score_row_cs", show=False):
-                            with dpg.group(horizontal=True):
-                                self._cs_enabled = dpg.add_checkbox(
-                                    default_value=False,
-                                    callback=self._on_cs_toggle,
-                                )
-                                self._cs_lbl = self.theme.text(
-                                    "Classic Splitting", "disabled",
-                                )
-                                self._hint(self._cs_lbl, "county_splits")
-                                dpg.add_button(label="↗", width=24,
-                                    callback=lambda: self._show_panel(
-                                        "panel_county_splits", self._panel_cs_item))
-                            with dpg.group(tag="cs_controls", show=False):
-                                self._w_county_excess = dpg.add_slider_int(
-                                    label="Excess weight",
-                                    default_value=1, min_value=0, max_value=100,
-                                    width=-150,
-                                )
-                                self._w_county_unified = dpg.add_slider_int(
-                                    label="Single-county weight",
-                                    default_value=1, min_value=0, max_value=100,
-                                    width=-150,
-                                )
-                            dpg.add_spacer(height=4)
-
-                        with dpg.group(tag="score_row_popdev", show=False):
-                            with dpg.group(horizontal=True):
-                                self._popdev_enabled = dpg.add_checkbox(
-                                    default_value=False,
-                                    callback=self._on_popdev_score_toggle,
-                                )
-                                self._popdev_lbl = self.theme.text(
-                                    "Population Deviation", "secondary",
-                                )
-                                self._hint(self._popdev_lbl, "pop_deviation")
-                                dpg.add_button(label="↗", width=24,
-                                    callback=lambda: self._show_panel(
-                                        "panel_popdev", self._panel_popdev_item))
-                                dpg.add_button(label="...", width=24,
-                                    callback=lambda: dpg.configure_item(
-                                        "popup_population",
-                                        show=not dpg.is_item_shown("popup_population")))
-                            with dpg.group(tag="popdev_controls", show=False):
-                                self._w_pop_deviation = dpg.add_slider_float(
-                                    label="Weight",
-                                    default_value=1.0, min_value=0.0, max_value=100.0,
-                                    format="%.1f", width=-75,
-                                )
-                            dpg.add_spacer(height=4)
-
-                        with dpg.group(tag="score_row_alignment", show=False):
-                            with dpg.group(horizontal=True):
-                                self._alignment_enabled = dpg.add_checkbox(
-                                    default_value=False,
-                                    callback=self._on_alignment_toggle,
-                                )
-                                self._alignment_lbl = self.theme.text(
-                                    "Plan Continuity", "secondary",
-                                )
-                                self._hint(self._alignment_lbl, "alignment")
-                                dpg.add_button(label="↗", width=24,
-                                    callback=lambda: self._show_panel(
-                                        "panel_alignment", self._panel_alignment_item))
-                                dpg.add_button(label="...", width=24,
-                                    callback=lambda: dpg.configure_item(
-                                        "popup_alignment_settings",
-                                        show=not dpg.is_item_shown("popup_alignment_settings")))
-                            with dpg.group(tag="alignment_controls", show=False):
-                                # Status line: red until a reference plan is loaded.
-                                # Load / Clear and all partisan options live in the
-                                # "..." settings popup.
-                                self._alignment_info = self.theme.text(
-                                    "No plan loaded", "error",
-                                )
-                                self._w_alignment = dpg.add_slider_int(
-                                    label="Weight",
-                                    default_value=25, min_value=0, max_value=100,
-                                    width=-75,
-                                )
-                            dpg.add_spacer(height=4)
-
-                    # Flexible columns share remaining width. Negative slider widths
-                    # reserve 75px for labels and right clearance, independent of values.
-                    with dpg.child_window(width=_SCORE_COL_W, height=-1,
-                                          border=False, tag="score_column_middle"):
-                        with dpg.group(tag="score_row_hprop", show=True):
-                            with dpg.group(horizontal=True):
-                                self._hprop_enabled = dpg.add_checkbox(
-                                    default_value=False, enabled=False,
-                                    callback=self._on_hprop_toggle,
-                                )
-                                self._hprop_lbl = self.theme.text(
-                                    "Proportionality",
-                                    "disabled_deep",
-                                )
-                                self._hint(self._hprop_lbl, "holistic_proportionality")
-                                dpg.add_button(label="↗", width=24,
-                                    callback=lambda: self._show_panel(
-                                        "panel_hprop", self._panel_hprop_item))
-                            with dpg.group(tag="hprop_controls", show=False):
-                                self._w_holistic_proportionality = dpg.add_slider_int(
-                                    label="Weight",
-                                    default_value=25, min_value=0, max_value=100,
-                                    width=-75,
-                                )
-                            dpg.add_spacer(height=4)
-
-                    # Col 3: outcome metrics
-                        with dpg.group(tag="score_row_hcmp", show=True):
-                            with dpg.group(horizontal=True):
-                                self._hcmp_enabled = dpg.add_checkbox(
-                                    default_value=False, enabled=False,
-                                    callback=self._on_hcmp_toggle,
-                                )
-                                self._hcmp_lbl = self.theme.text(
-                                    "Competitiveness",
-                                    "disabled_deep",
-                                )
-                                self._hint(self._hcmp_lbl, "holistic_competitiveness")
-                                dpg.add_button(label="↗", width=24,
-                                    callback=lambda: self._show_panel(
-                                        "panel_hcmp", self._panel_hcmp_item))
-                            with dpg.group(tag="hcmp_controls", show=False):
-                                self._w_holistic_competitiveness = dpg.add_slider_int(
-                                    label="Weight",
-                                    default_value=25, min_value=0, max_value=100,
-                                    width=-75,
-                                )
-                            dpg.add_spacer(height=4)
-
-                    # Col 3: partisanship -- seat outcomes, then demographics
-                    # Col 3: Representation (flagship) first, then the rest of
-                    # demographics, then partisan seat outcomes.
-                        with dpg.group(tag="score_row_mm", show=False):
-                            with dpg.group(horizontal=True):
-                                self._mm_enabled = dpg.add_checkbox(
-                                    default_value=False, enabled=False,
-                                    callback=self._on_mm_toggle,
-                                )
-                                self._mm_lbl = self.theme.text(
-                                    "Mean-Median Difference",
-                                    "disabled_deep",
-                                )
-                                self._hint(self._mm_lbl, "mean_median")
-                                dpg.add_button(label="↗", width=24,
-                                    callback=lambda: self._show_panel(
-                                        "panel_mm", self._panel_mm_item))
-                                dpg.add_button(label="...", width=24,
-                                    callback=lambda: dpg.configure_item(
-                                        "popup_partisan",
-                                        show=not dpg.is_item_shown("popup_partisan")))
-                            with dpg.group(tag="mm_controls", show=False):
-                                self._w_mean_median = dpg.add_slider_int(
-                                    label="Weight",
-                                    default_value=1, min_value=0, max_value=100,
-                                    width=-75,
-                                )
-                                self._mm_dir = choice_radio(help_key="direction",
-                                    items=["Fair", "D", "R"],
-                                    default_value="Fair", horizontal=True,
-                                )
-                            dpg.add_spacer(height=4)
-
-                        with dpg.group(tag="score_row_eg", show=False):
-                            with dpg.group(horizontal=True):
-                                self._eg_enabled = dpg.add_checkbox(
-                                    default_value=False, enabled=False,
-                                    callback=self._on_eg_toggle,
-                                )
-                                self._eg_lbl = self.theme.text(
-                                    "Efficiency Gap",
-                                    "disabled_deep",
-                                )
-                                self._hint(self._eg_lbl, "efficiency_gap")
-                                dpg.add_button(label="↗", width=24,
-                                    callback=lambda: self._show_panel(
-                                        "panel_eg", self._panel_eg_item))
-                                dpg.add_button(label="...", width=24,
-                                    callback=lambda: dpg.configure_item(
-                                        "popup_partisan",
-                                        show=not dpg.is_item_shown("popup_partisan")))
-                            with dpg.group(tag="eg_controls", show=False):
-                                self._w_efficiency_gap = dpg.add_slider_int(
-                                    label="Weight",
-                                    default_value=1, min_value=0, max_value=100,
-                                    width=-75,
-                                )
-                                self._eg_dir = choice_radio(help_key="direction",
-                                    items=["Fair", "D", "R"],
-                                    default_value="Fair", horizontal=True,
-                                )
-                            dpg.add_spacer(height=4)
-
-                        with dpg.group(tag="score_row_pb", show=False):
-                            with dpg.group(horizontal=True):
-                                self._pb_enabled = dpg.add_checkbox(
-                                    default_value=False, enabled=False,
-                                    callback=self._on_pb_toggle,
-                                )
-                                self._pb_lbl = self.theme.text(
-                                    "Partisan Bias",
-                                    "disabled_deep",
-                                )
-                                self._hint(self._pb_lbl, "partisan_bias")
-                                dpg.add_button(label="↗", width=24,
-                                    callback=lambda: self._show_panel(
-                                        "panel_pb", self._panel_pb_item))
-                                dpg.add_button(label="...", width=24,
-                                    callback=lambda: dpg.configure_item(
-                                        "popup_partisan",
-                                        show=not dpg.is_item_shown("popup_partisan")))
-                            with dpg.group(tag="pb_controls", show=False):
-                                self._w_partisan_bias = dpg.add_slider_int(
-                                    label="Weight",
-                                    default_value=1, min_value=0, max_value=100,
-                                    width=-75,
-                                )
-                                self._pb_dir = choice_radio(help_key="direction",
-                                    items=["Fair", "D", "R"],
-                                    default_value="Fair", horizontal=True,
-                                )
-                            dpg.add_spacer(height=4)
-
-                        with dpg.group(tag="score_row_pg", show=False):
-                            with dpg.group(horizontal=True):
-                                self._pg_enabled = dpg.add_checkbox(
-                                    default_value=False, enabled=False,
-                                    callback=self._on_pg_toggle,
-                                )
-                                self._pg_lbl = self.theme.text(
-                                    "Partisan Gini",
-                                    "disabled_deep",
-                                )
-                                self._hint(self._pg_lbl, "partisan_gini")
-                                dpg.add_button(label="↗", width=24,
-                                    callback=lambda: self._show_panel(
-                                        "panel_pg", self._panel_pg_item))
-                            with dpg.group(tag="pg_controls", show=False):
-                                self._w_partisan_gini = dpg.add_slider_int(
-                                    label="Weight",
-                                    default_value=25, min_value=0, max_value=100,
-                                    width=-75,
-                                )
-                            dpg.add_spacer(height=4)
-
-                    # Col 3: flagships (Electoral Opportunity, Community Dispersion),
-                    # then Neighborhood Severance, then partisan seat outcomes.
-                    with dpg.child_window(width=_SCORE_COL_W, height=-1, border=False,
-                                          tag="score_column_right"):
-                        with dpg.group(tag="score_row_representation", show=True):
-                            with dpg.group(horizontal=True):
-                                self._representation_enabled = dpg.add_checkbox(
-                                    default_value=False,
-                                    callback=self._on_representation_toggle,
-                                )
-                                self._representation_lbl = self.theme.text(
-                                    "Electoral Opportunity", "secondary",
-                                )
-                                self._hint(self._representation_lbl, "representation")
-                                dpg.add_button(label="↗", width=24,
-                                    callback=lambda: self._show_panel(
-                                        "panel_representation", self._panel_representation_item))
-                                dpg.add_button(label="...", width=24,
-                                    callback=lambda: dpg.configure_item(
-                                        "popup_representation",
-                                        show=not dpg.is_item_shown("popup_representation")))
-                            with dpg.group(tag="representation_controls", show=False):
-                                self._w_representation = dpg.add_slider_int(
-                                    label="Weight",
-                                    default_value=25, min_value=0, max_value=100,
-                                    width=-75,
-                                )
-                            dpg.add_spacer(height=4)
-
-                        with dpg.group(tag="score_row_community_congruence", show=True):
-                            with dpg.group(horizontal=True):
-                                self._community_congruence_enabled = dpg.add_checkbox(
-                                    default_value=False,
-                                    callback=self._on_community_congruence_toggle,
-                                )
-                                self._community_congruence_lbl = self.theme.text(
-                                    "Community Dispersion", "secondary",
-                                )
-                                self._hint(self._community_congruence_lbl,
-                                           "community_congruence")
-                                dpg.add_button(label="↗", width=24,
-                                    callback=lambda: self._show_panel(
-                                        "panel_community_congruence",
-                                        self._panel_community_congruence_item))
-                            with dpg.group(tag="community_congruence_controls",
-                                           show=False):
-                                self._w_community_congruence = dpg.add_slider_int(
-                                    label="Weight",
-                                    default_value=10, min_value=0, max_value=100,
-                                    width=-75,
-                                )
-                            dpg.add_spacer(height=4)
-                        with dpg.group(tag="score_row_minority_cohesion", show=False):
-                            with dpg.group(horizontal=True):
-                                self._minority_cohesion_enabled = dpg.add_checkbox(
-                                    default_value=False,
-                                    callback=self._on_minority_cohesion_toggle,
-                                )
-                                self._minority_cohesion_lbl = self.theme.text(
-                                    "Neighborhood Severance", "secondary",
-                                )
-                                self._hint(self._minority_cohesion_lbl, "minority_cohesion")
-                                dpg.add_button(label="↗", width=24,
-                                    callback=lambda: self._show_panel(
-                                        "panel_minority_cohesion",
-                                        self._panel_minority_cohesion_item))
-                            with dpg.group(tag="minority_cohesion_controls", show=False):
-                                self._w_minority_cohesion = dpg.add_slider_int(
-                                    label="Weight",
-                                    default_value=10, min_value=0, max_value=100,
-                                    width=-75,
-                                )
-                            dpg.add_spacer(height=4)
-
-                        with dpg.group(tag="score_row_seats", show=False):
-                            with dpg.group(horizontal=True):
-                                self._seats_enabled = dpg.add_checkbox(
-                                    default_value=False, enabled=False,
-                                    callback=self._on_seats_toggle,
-                                )
-                                self._seats_lbl = self.theme.text(
-                                    "Expected Dem Seats",
-                                    "disabled_deep",
-                                )
-                                self._hint(self._seats_lbl, "dem_seats")
-                                dpg.add_button(label="↗", width=24,
-                                    callback=lambda: self._show_panel(
-                                        "panel_dem_seats", self._panel_seats_item))
-                            with dpg.group(tag="seats_controls", show=False):
-                                self._w_dem_seats = dpg.add_slider_int(
-                                    label="Weight",
-                                    default_value=25, min_value=0, max_value=100,
-                                    width=-75,
-                                )
-                                self._dem_seats_dir = choice_radio(help_key="seats",
-                                    items=["D", "R"],
-                                    default_value="D", horizontal=True,
-                                )
-                            dpg.add_spacer(height=4)
-
-                        with dpg.group(tag="score_row_majority", show=False):
-                            with dpg.group(horizontal=True):
-                                self._majority_enabled = dpg.add_checkbox(
-                                    default_value=False, enabled=False,
-                                    callback=self._on_majority_toggle,
-                                )
-                                self._majority_lbl = self.theme.text(
-                                    "Chance of Majority",
-                                    "disabled_deep",
-                                )
-                                self._hint(self._majority_lbl, "majority_chance")
-                                dpg.add_button(label="↗", width=24,
-                                    callback=lambda: self._show_panel(
-                                        "panel_majority", self._panel_majority_item))
-                            with dpg.group(tag="majority_controls", show=False):
-                                self._w_majority = dpg.add_slider_int(
-                                    label="Weight",
-                                    default_value=1, min_value=0, max_value=100,
-                                    width=-75,
-                                )
-                                with dpg.group(horizontal=True):
-                                    self._majority_dem_chk = dpg.add_checkbox(
-                                        label="D", default_value=True,
-                                        callback=self._on_majority_dem_chk,
-                                    )
-                                    dpg.add_spacer(width=12)
-                                    self._majority_rep_chk = dpg.add_checkbox(
-                                        label="R", default_value=False,
-                                        callback=self._on_majority_rep_chk,
-                                    )
-                                self._tooltip(
-                                    self._majority_dem_chk,
-                                    "Choose the party whose majority chance to favor.",
-                                )
-                                self._tooltip(
-                                    self._majority_rep_chk,
-                                    "Choose the party whose majority chance to favor.",
-                                )
-                            dpg.add_spacer(height=4)
-
-                        with dpg.group(tag="score_row_hinge", show=False):
-                            with dpg.group(horizontal=True):
-                                self._hinge_enabled = dpg.add_checkbox(
-                                    default_value=False, enabled=False,
-                                    callback=self._on_hinge_toggle,
-                                )
-                                self._hinge_lbl = self.theme.text(
-                                    "Supermajority/Hinge",
-                                    "disabled_deep",
-                                )
-                                self._hint(self._hinge_lbl, "hinge")
-                                dpg.add_button(label="↗", width=24,
-                                    callback=lambda: self._show_panel(
-                                        "panel_hinge", self._panel_hinge_item))
-                            with dpg.group(tag="hinge_controls", show=False):
-                                self._w_hinge = dpg.add_slider_int(
-                                    label="Weight",
-                                    default_value=1, min_value=0, max_value=100,
-                                    width=-75,
-                                )
-                                self._hinge_threshold = dpg.add_slider_int(
-                                    label="Target",
-                                    default_value=8, min_value=1, max_value=14,
-                                    width=-75,
-                                )
-                                self._tooltip(
-                                    self._hinge_threshold,
-                                    "Minimum seats the selected party must win.",
-                                )
-                                with dpg.group(horizontal=True):
-                                    self._hinge_dem_chk = dpg.add_checkbox(
-                                        label="D", default_value=True,
-                                        callback=self._on_hinge_dem_chk,
-                                    )
-                                    dpg.add_spacer(width=12)
-                                    self._hinge_rep_chk = dpg.add_checkbox(
-                                        label="R", default_value=False,
-                                        callback=self._on_hinge_rep_chk,
-                                    )
-                                self._tooltip(
-                                    self._hinge_dem_chk,
-                                    "Choose the party whose seat-target chance to favor.",
-                                )
-                                self._tooltip(
-                                    self._hinge_rep_chk,
-                                    "Choose the party whose seat-target chance to favor.",
-                                )
-                            dpg.add_spacer(height=4)
+                # ── Right: every score, grouped, one line each ────────────
+                with dpg.child_window(width=_SCORES_W, border=True,
+                                      tag="scores_column"):
+                    self._build_scores_column()
 
         self._refresh_recent_presets_menu()
         dpg.set_primary_window("main_window", True)
@@ -1540,13 +606,182 @@ class SetupMixin:
         # the active background into it before a shapefile builds its LUT.
         self._sync_map_bg_to_theme()
 
-    def _build_start_status_row(self):
-        with dpg.group(horizontal=True):
-            self._hot_start_info = self.theme.text("Start: Random partition", "muted")
-            self._start_mode_tooltip = None
-            self._preset_info = self.theme.text("Preset warning", "warning", show=False)
-            with dpg.tooltip(self._preset_info):
-                self._preset_info_detail = dpg.add_text("", wrap=360)
+    # ── Left column pieces ────────────────────────────────────────────────────
+
+    def _build_setup_line(self, label: str, factory, attr: str) -> None:
+        """A `muted` label on the left, its value on the right.
+
+        Dear PyGui has no right alignment, so the value sits in a fixed column
+        of a two-column table, which lines the values up with each other.
+        """
+        with dpg.table(header_row=False, policy=dpg.mvTable_SizingFixedFit,
+                       borders_innerH=False, borders_outerH=False,
+                       borders_innerV=False, borders_outerV=False, width=-1):
+            dpg.add_table_column(width_stretch=True, init_width_or_weight=1.0)
+            dpg.add_table_column(width_fixed=True, init_width_or_weight=150)
+            with dpg.table_row():
+                self.theme.text(label, "muted")
+                setattr(self, attr, factory())
+
+    def _build_result_tiles(self) -> None:
+        """Four stat tiles: a `muted` label over the value in the title size.
+
+        Replaces nine loose "Label: value" lines that read at one weight. The
+        four here are what a person watches; the rest moved to Run details.
+        """
+        value_font = self.theme.value_font()
+
+        def tile(label: str, attr: str, note_attr: str | None = None) -> None:
+            with dpg.group():
+                self.theme.text(label, "muted")
+                item = self.theme.text("--", "body")
+                setattr(self, attr, item)
+                if value_font:
+                    dpg.bind_item_font(item, value_font)
+                if note_attr:
+                    setattr(self, note_attr, self.theme.text("", "muted"))
+                else:
+                    dpg.add_spacer(height=2)
+
+        with dpg.table(header_row=False, policy=dpg.mvTable_SizingStretchSame,
+                       borders_innerH=True, borders_outerH=False,
+                       borders_innerV=True, borders_outerV=False, width=-1):
+            dpg.add_table_column()
+            dpg.add_table_column()
+            with dpg.table_row():
+                tile("Score", "_score_txt")
+                tile("Best", "_best_txt", "_best_note")
+            with dpg.table_row():
+                tile("Time", "_time_txt")
+                tile("Speed", "_ips_txt", "_ips_note")
+        dpg.set_value(self._ips_note, "iterations / s")
+
+    def _build_run_details_popup(self) -> None:
+        """The readouts a person checks rather than watches."""
+        with self._dialog(
+            "Run details", "popup_run_details", (360, 220), show=False,
+            primary=("Close", lambda: dpg.configure_item(
+                "popup_run_details", show=False)),
+        ):
+            self._status_txt = dpg.add_text("Status: Idle", wrap=330)
+            dpg.add_separator()
+            self._temp_txt = dpg.add_text("Temperature: --")
+            self._acc_txt = dpg.add_text("Entropy: --")
+            self._succ_txt = dpg.add_text("Accepted steps: --")
+            self._flip_txt = dpg.add_text("Flip rate: 0.0%")
+
+    # ── Centre column pieces ──────────────────────────────────────────────────
+
+    def _build_run_strip(self) -> None:
+        """One primary action, two secondary, a tiled progress bar, and where
+        the run has got to."""
+        with dpg.child_window(width=-1, height=74, border=True,
+                              tag="run_strip", no_scrollbar=True):
+            with dpg.group(horizontal=True):
+                # One nudge per view: whichever of Start / Pause / Resume is
+                # the next step. _sync_run_strip keeps its label in step.
+                self._run_btn = dpg.add_button(label="Start", width=96,
+                                               callback=self._on_run_strip)
+                dpg.bind_item_theme(self._run_btn, self.theme.nudge_theme)
+                self._reset_btn = dpg.add_button(label="Reset", width=76,
+                                                 callback=self._on_reset)
+                self._revert_btn = dpg.add_button(
+                    label="Revert to best", width=120,
+                    callback=self._on_revert_to_best, enabled=False)
+                dpg.add_spacer(width=4)
+                with dpg.drawlist(width=_RUN_TILES * 13, height=16,
+                                  tag="run_tiles"):
+                    for i in range(_RUN_TILES):
+                        dpg.draw_rectangle(
+                            (i * 13, 2), (i * 13 + 10, 14), fill=(0, 0, 0, 0),
+                            color=(0, 0, 0, 0), tag=f"run_tile_{i}")
+            with dpg.group(horizontal=True):
+                self._iter_txt = self.theme.text("0 / 0", "muted")
+                dpg.add_spacer(width=6)
+                self._eta_txt = self.theme.text("--", "body")
+                if self.theme.value_font():
+                    pass   # the ETA uses body weight; semibold is not separate
+            # Start and Pause were two buttons that swapped which was greyed.
+            # They are one button now, so this holds the old pause handler.
+            self._pause_btn = self._run_btn
+
+    def _on_run_strip(self) -> None:
+        """The single primary button: start, pause or resume by run state."""
+        from mosaic.gui.state import AlgorithmStatus
+        status = self.state.get("status")[0]
+        if status in (AlgorithmStatus.RUNNING, AlgorithmStatus.PAUSED,
+                      AlgorithmStatus.PARTITIONING):
+            self._on_pause()
+        else:
+            self._on_run()
+
+    def _build_map_toolbar(self) -> None:
+        """Fill, overlays and export, above the map."""
+        with dpg.theme() as toolbar_theme:
+            with dpg.theme_component(dpg.mvTable):
+                dpg.add_theme_style(dpg.mvStyleVar_CellPadding, 4, 1,
+                                    category=dpg.mvThemeCat_Core)
+        with dpg.table(
+            header_row=False, borders_innerH=False, borders_outerH=False,
+            borders_innerV=False, borders_outerV=False, width=-1,
+            policy=dpg.mvTable_SizingFixedFit,
+        ) as map_toolbar:
+            dpg.add_table_column(width_fixed=True)
+            dpg.add_table_column(width_fixed=True)
+            dpg.add_table_column(width_stretch=True, init_width_or_weight=1.0)
+            dpg.add_table_column(width_fixed=True)
+            with dpg.table_row():
+                with dpg.group(horizontal=True):
+                    self.theme.text("Fill", "muted", tag="map_fill_label")
+                    self._fill_combo = dpg.add_combo(
+                        items=self._fill_labels(), default_value=_FILL_NONE,
+                        width=200, callback=self._on_fill_combo)
+                    self._tooltip(
+                        self._fill_combo,
+                        "Color the map by one measure. Unavailable choices "
+                        "show which data they require.")
+                with dpg.group(horizontal=True, tag="map_overlay_controls"):
+                    self._county_overlay = dpg.add_checkbox(
+                        label="Cities", default_value=False,
+                        callback=self._on_county_overlay_toggle)
+                    self._tooltip(self._county_overlay,
+                                  "Draw place boundaries over the map.")
+                    self._precinct_overlay = dpg.add_checkbox(
+                        label="Precincts", default_value=False,
+                        callback=self._on_precinct_overlay_toggle)
+                    self._tooltip(self._precinct_overlay,
+                                  "Draw precinct boundaries over the map.")
+                    self._show_labels = dpg.add_checkbox(
+                        label="Labels", default_value=False,
+                        callback=self._on_labels_toggle)
+                    self._tooltip(self._show_labels, "Show district numbers.")
+                    self._splits_view = dpg.add_checkbox(
+                        label="Splits", default_value=False, enabled=False,
+                        callback=self._on_splits_view_toggle)
+                    self._tooltip(
+                        self._splits_view,
+                        "Highlight places assigned to more than one district. "
+                        "Requires a place column.")
+                dpg.add_spacer(width=1)
+                with dpg.group(horizontal=True, tag="map_save_controls"):
+                    self._cam_btn = dpg.add_image_button(
+                        "camera_icon_texture", callback=self._on_save_map,
+                        width=13, height=13)
+                    with dpg.tooltip(self._cam_btn):
+                        dpg.add_text("Save a PNG of the full map.")
+                    self._more_btn = dpg.add_button(
+                        label="Export\u2026",
+                        callback=self._on_advanced_save_open)
+                    with dpg.tooltip(self._more_btn):
+                        dpg.add_text("Save the full map as PNG or PDF.")
+                    self._save_spinner = dpg.add_loading_indicator(
+                        style=0, radius=2.0, show=False,
+                        color=self.theme.color("body"),
+                        secondary_color=self.theme.color("muted"))
+                    dpg.add_spacer(width=4)
+        dpg.bind_item_theme(map_toolbar, toolbar_theme)
+        if self._small_font:
+            dpg.bind_item_font(map_toolbar, self._small_font)
 
     def _build_map_canvas(self):
         if not self._map_native_input:
@@ -1593,34 +828,42 @@ class SetupMixin:
                 if dpg.get_viewport_client_width() < _MIN_CLIENT_W:
                     dpg.set_viewport_width(_MIN_CLIENT_W + frame)
                 self._min_width_set = True
-        sp = self.theme.palette.spacing
         client_w = dpg.get_viewport_client_width()
         client_h = dpg.get_viewport_client_height()
         if client_w > 0 and client_h > 0:
             self._shp_dialog.fit_to_viewport(client_w, client_h)
-            # Scores absorb changes in available height; reserve a little room
-            # so scrollbar visibility cannot repeatedly toggle at the boundary.
-            menu_h = dpg.get_item_state("main_menu_bar").get("rect_size", (0, 24))[1]
-            height = max(_SCORE_MIN_H, client_h - _TOP_H - menu_h
-                         - 2 * sp.window_padding[1] - sp.item_spacing[1] - 20)
-            if dpg.get_item_configuration("score_panel")["height"] != height:
-                dpg.configure_item("score_panel", height=height)
+            self._update_map_height(client_h)
+            self._update_column_widths(client_w)
         self._update_map_fill_width()
-        self._update_score_column_widths()
         self._sync_map_size()
 
-    def _update_score_column_widths(self):
-        spacing = self.theme.palette.spacing
-        panel_width = dpg.get_item_rect_size("score_panel")[0]
-        if panel_width <= 0:
-            return
-        # Reserve the outer padding, column gaps, and a scrollbar gutter.
-        available = (panel_width - 2 * spacing.window_padding[0]
-                     - 2 * spacing.item_spacing[0] - 16)
-        width = max(1, int(available // 3))
-        for column in ("score_column_left", "score_column_middle", "score_column_right"):
-            if dpg.get_item_configuration(column)["width"] != width:
-                dpg.configure_item(column, width=width)
+    def _update_column_widths(self, client_w: int) -> None:
+        """Give the centre column whatever the fixed outer two do not use.
+
+        A width of -1 would stretch it to the window edge and push the scores
+        column off screen, since Dear PyGui lays the row out left to right
+        without knowing what still has to fit.
+        """
+        sp = self.theme.palette.spacing
+        gaps = 2 * sp.window_padding[0] + 2 * sp.item_spacing[0] + 8
+        width = max(320, client_w - _SETUP_W - _SCORES_W - gaps)
+        if dpg.get_item_configuration("map_column")["width"] != width:
+            dpg.configure_item("map_column", width=width)
+
+    def _update_map_height(self, client_h: int) -> None:
+        """Spare height goes to the map, then to the charts under it.
+
+        The three columns are full height; only the map box inside the centre
+        column grows, so the run strip and charts stay put and the map gets
+        every pixel the window gains.
+        """
+        sp = self.theme.palette.spacing
+        menu_h = dpg.get_item_state("main_menu_bar").get("rect_size", (0, 24))[1]
+        # toolbar + run strip + charts + the gaps between them.
+        fixed = 30 + 74 + _HALF_PLOT_H + 28 + 2 * sp.window_padding[1] + menu_h
+        height = max(220, client_h - fixed)
+        if dpg.get_item_configuration("map_container")["height"] != height:
+            dpg.configure_item("map_container", height=height)
 
     def _update_map_fill_width(self):
         # Image dimensions exclude frame padding; match the adjacent text button.
@@ -1636,6 +879,6 @@ class SetupMixin:
             return
         # Four table cells, the fill-label gap, and clearance for the stretch cell.
         spacing = self.theme.palette.spacing.item_spacing[0]
-        width = max(40, min(225, int(available - sum(fixed) - 32 - spacing - 8)))
+        width = max(150, min(225, int(available - sum(fixed) - 32 - spacing - 8)))
         if dpg.get_item_configuration(self._fill_combo)["width"] != width:
             dpg.configure_item(self._fill_combo, width=width)
