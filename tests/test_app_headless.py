@@ -14,6 +14,7 @@ import time
 from pathlib import Path
 
 import dearpygui.dearpygui as dpg
+import pytest
 
 from mosaic.gui.state import AlgorithmStatus
 
@@ -140,3 +141,166 @@ def test_widget_attributes_hold_live_items(app):
             if not dpg.does_item_exist(value):
                 dead.append(name)
     assert not dead, f"attributes naming items that no longer exist: {dead}"
+
+
+# ── Layout on a real window (step 1 follow-up) ───────────────────────────────
+# Each of these was wrong on a 1843 x 925 display: the map sat at a fixed
+# height in a column twice as tall, the charts were clipped off the bottom, and
+# the right-hand column ran off the edge.
+
+SIZES = [(1843, 925), (1440, 900)]
+
+
+def _resize(app, width, height):
+    dpg.set_viewport_width(width)
+    dpg.set_viewport_height(height)
+    assert _pump(app, lambda: dpg.get_viewport_client_width() == width
+                 and dpg.get_viewport_client_height() == height, timeout=20), (
+        "the viewport would not take the requested size")
+    # Two-stage settle: the columns, then the map raster redrawn to fit them.
+    for _ in range(10):
+        app.run_frame()
+    assert _pump(app, lambda: (app._map_w, app._map_h) == app._map_target
+                 and app._map_resize_job is None, timeout=60), (
+        "the map never settled on the size its box asked for")
+    for _ in range(5):
+        app.run_frame()
+
+
+def _column(tag):
+    state = dpg.get_item_state(tag)
+    return state["pos"], state["rect_size"]
+
+
+@pytest.mark.parametrize("size", SIZES)
+def test_all_three_columns_fit_the_window(app, size):
+    _resize(app, *size)
+    width, height = size
+    right_edges = []
+    for tag in ("setup_column", "map_column", "scores_column"):
+        (x, y), (w, h) = _column(tag)
+        assert x >= 0 and x + w <= width, f"{tag} runs past the window edge"
+        assert y + h <= height, f"{tag} runs past the bottom of the window"
+        right_edges.append(x + w)
+    assert right_edges == sorted(right_edges)
+    # The count in the scores heading was the first thing to be cut off.
+    assert dpg.get_item_state(app._scores_count)["rect_max"][0] <= width
+    # And no row's value column either.
+    for row in app._score_rows.values():
+        assert dpg.get_item_state(row["value"])["rect_max"][0] <= width
+
+
+@pytest.mark.parametrize("size", SIZES)
+def test_the_map_fills_the_centre_column(app, size):
+    _resize(app, *size)
+    sp = app.theme.palette.spacing
+    (_, _), (col_w, col_h) = _column("map_column")
+    (_, box_y), (box_w, box_h) = _column("map_container")
+    canvas_w, canvas_h = dpg.get_item_rect_size("map_canvas")
+    # The raster is the box, less the box's own padding and border.
+    assert canvas_w == box_w - 2 * sp.window_padding[0] - 2 * sp.child_border_size
+    assert canvas_h == box_h - 2 * sp.window_padding[1] - 2 * sp.child_border_size
+    assert (app.map_view._w, app.map_view._h) == (canvas_w, canvas_h)
+    # It is the largest thing in the column, not a strip at the top of it.
+    assert box_h > 0.75 * col_h
+    assert box_w >= col_w - 2
+    # Nothing under the map is pushed out of the column.
+    (_, strip_y), (_, strip_h) = _column("run_strip")
+    assert strip_y + strip_h <= col_h
+
+
+def test_the_map_refits_when_the_window_changes(app):
+    _resize(app, 1843, 925)
+    big = (app._map_w, app._map_h)
+    _resize(app, 1440, 900)
+    small = (app._map_w, app._map_h)
+    assert small[0] < big[0] and small != big
+    _resize(app, 1843, 925)
+    assert (app._map_w, app._map_h) == big
+
+
+@pytest.mark.parametrize("size", SIZES)
+def test_the_toolbar_sits_above_the_map(app, size):
+    _resize(app, *size)
+    (_, box_y), _ = _column("map_container")
+    for attr in ("_fill_combo", "_county_overlay", "_precinct_overlay",
+                 "_show_labels", "_splits_view", "_fill_opacity", "_more_btn"):
+        item = getattr(app, attr)
+        state = dpg.get_item_state(item)
+        assert dpg.is_item_shown(item) and state["visible"], attr
+        assert state["rect_size"][0] > 0, attr
+    # Relative to the same column: the toolbar's rows end where the map begins.
+    assert dpg.get_item_rect_size("map_toolbar")[1] <= box_y
+    assert dpg.get_y_scroll("map_column") == 0
+
+
+def test_charts_are_hidden_but_reachable(app):
+    assert not dpg.is_item_shown("main_charts")
+    _resize(app, 1843, 925)
+    without = dpg.get_item_rect_size("map_container")[1]
+    dpg.set_value(app._charts_item, True)
+    dpg.get_item_callback(app._charts_item)()
+    _resize(app, 1843, 925)
+    assert dpg.is_item_shown("main_charts")
+    (_, _), (_, col_h) = _column("map_column")
+    charts_h = dpg.get_item_rect_size("main_charts")[1]
+    assert charts_h > 100
+    # They take their height from the map rather than falling off the window.
+    assert dpg.get_item_rect_size("map_container")[1] < without - 100
+    dpg.set_value(app._charts_item, False)
+    dpg.get_item_callback(app._charts_item)()
+    _resize(app, 1843, 925)
+    assert dpg.get_item_rect_size("map_container")[1] == without
+
+
+@pytest.mark.parametrize("size", SIZES)
+def test_goals_and_map_panels_do_not_scroll(app, size):
+    _resize(app, *size)
+    for tag in ("panel_goals", "panel_map_setup"):
+        assert dpg.get_y_scroll_max(tag) == 0, f"{tag} has a scrollbar"
+
+
+def test_the_weight_shows_once(app):
+    """A slider with no value text, and the number field beside it."""
+    for attr, field in app._score_fields.items():
+        assert dpg.get_item_configuration(getattr(app, attr))["format"] == "", attr
+        assert dpg.get_value(field) == dpg.get_value(getattr(app, attr)), attr
+
+
+def test_start_from_does_not_repeat_its_label(app):
+    app._update_start_mode_display()
+    assert dpg.get_value(app._hot_start_info) == "Random partition"
+
+
+def test_fill_opacity_reaches_the_map_and_is_saved(app, tmp_path, monkeypatch):
+    from mosaic.gui.app import map_mixin
+
+    monkeypatch.setattr(map_mixin, "_SETTINGS_DIR", tmp_path)
+    monkeypatch.setattr(map_mixin, "_MAP_STYLE_FILE", tmp_path / "map_style.json")
+    assert dpg.get_item_configuration(app._fill_opacity)["max_value"] == 100
+    try:
+        dpg.set_value(app._fill_opacity, 45)
+        app._on_fill_opacity()
+        assert app.map_view.fill_opacity == pytest.approx(0.45)
+        assert '"fill_opacity": 0.45' in (tmp_path / "map_style.json").read_text()
+        # Read back the way the next launch would.
+        app._fill_opacity_value = 1.0
+        app._load_map_style()
+        assert app._fill_opacity_value == pytest.approx(0.45)
+    finally:
+        dpg.set_value(app._fill_opacity, 100)
+        app._on_fill_opacity()
+    assert app.map_view.fill_opacity == 1.0
+
+
+def test_a_missing_or_broken_style_file_keeps_full_opacity(app, tmp_path, monkeypatch):
+    from mosaic.gui.app import map_mixin
+
+    path = tmp_path / "map_style.json"
+    monkeypatch.setattr(map_mixin, "_MAP_STYLE_FILE", path)
+    for content in (None, "not json", '{"fill_opacity": 7}', '{"other": 1}'):
+        if content is not None:
+            path.write_text(content)
+        app._fill_opacity_value = 1.0
+        app._load_map_style()
+        assert app._fill_opacity_value == 1.0, content

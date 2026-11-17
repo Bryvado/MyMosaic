@@ -1,4 +1,7 @@
 """Builds the main three-column window layout (one large builder)."""
+from contextlib import contextmanager
+
+from mosaic.gui.layout import column_widths, map_box_height
 from mosaic.gui.map_navigation import MAX_ZOOM
 
 from ._common import (
@@ -110,6 +113,7 @@ class SetupMixin:
         self._load_recent_shapefiles()
         self._load_recent_presets()
         self._load_place_unit()
+        self._load_map_style()
 
         self._build_population_popup()
         self._build_seed_popup()
@@ -275,6 +279,14 @@ class SetupMixin:
                 # omits County-Edge Bias (not a score chart) and appends panels
                 # with no score row, such as Temperature and District Info.
                 with dpg.menu(label="Views"):
+                    self._charts_item = dpg.add_menu_item(
+                        label="Score and entropy charts", check=True,
+                        default_value=False,
+                        callback=lambda: dpg.configure_item(
+                            "main_charts",
+                            show=dpg.get_value(self._charts_item)),
+                    )
+                    dpg.add_separator()
                     # ── Geography ── (mirrors the Scores menu 1:1)
                     self._panel_cuts_item = dpg.add_menu_item(
                         label="Cut Edges", check=True, default_value=False,
@@ -471,13 +483,13 @@ class SetupMixin:
                 # ── Left: Map, Goals, Results ─────────────────────────────
                 with dpg.child_window(width=_SETUP_W, border=False,
                                       tag="setup_column"):
-                    with dpg.child_window(width=-1, height=242, border=True,
-                                          tag="panel_map_setup"):
-                        with dpg.group(horizontal=True):
-                            self.theme.text("Map", "heading")
-                            dpg.add_spacer(width=_SETUP_W - 176)
+                    # auto_resize_y: the panel is as tall as its rows, so it
+                    # never shows a scrollbar the column has room to avoid.
+                    with dpg.child_window(width=-1, auto_resize_y=True,
+                                          border=True, tag="panel_map_setup"):
+                        with self._heading_row("Map"):
                             dpg.add_button(
-                                label="Open shapefile\u2026", width=130,
+                                label="Open shapefile\u2026",
                                 callback=self._on_import_shapefile,
                             )
                         dpg.add_separator()
@@ -498,7 +510,7 @@ class SetupMixin:
                         # follows into the goal and the score phrases.
                         self._build_setup_line(
                             "Places are", lambda: dpg.add_input_text(
-                                default_value=self._place_unit, width=150,
+                                default_value=self._place_unit, width=-1,
                                 callback=self._on_place_unit_change),
                             "_place_unit_input")
                         self._tooltip(
@@ -508,51 +520,64 @@ class SetupMixin:
                             "that column? Set this to \"cities\" and the goal "
                             "reads \"Keep cities whole\". Wording only -- the "
                             "score and its settings do not change.")
-                        _inp_w = (_SETUP_W - 36) // 2
-                        with dpg.group(horizontal=True):
-                            with dpg.group():
-                                self.theme.text("Districts", "subheading")
-                                self._num_districts = dpg.add_input_int(
-                                    label="##dist", default_value=5,
-                                    min_value=2, max_value=500,
-                                    min_clamped=True, max_clamped=True,
-                                    width=_inp_w, step=0,
-                                    callback=self._on_num_districts_change,
-                                )
-                                self._tooltip(self._num_districts,
-                                              "Number of districts in the plan.")
-                            with dpg.group():
-                                self.theme.text("Iterations", "subheading")
-                                self._iterations = dpg.add_input_int(
-                                    label="##iter", default_value=5000,
-                                    min_value=1, max_value=1_000_000,
-                                    width=_inp_w, step=0,
-                                )
-                                self._tooltip(
-                                    self._iterations,
-                                    "Maximum number of proposed map changes. "
-                                    "More iterations take longer but do not "
-                                    "guarantee a better map.")
+                        # Two equal columns that follow the panel's width.
+                        with dpg.table(header_row=False, width=-1,
+                                       policy=dpg.mvTable_SizingStretchSame,
+                                       borders_innerH=False, borders_outerH=False,
+                                       borders_innerV=False, borders_outerV=False):
+                            dpg.add_table_column()
+                            dpg.add_table_column()
+                            with dpg.table_row():
+                                with dpg.group():
+                                    self.theme.text("Districts", "subheading")
+                                    self._num_districts = dpg.add_input_int(
+                                        label="##dist", default_value=5,
+                                        min_value=2, max_value=500,
+                                        min_clamped=True, max_clamped=True,
+                                        width=-1, step=0,
+                                        callback=self._on_num_districts_change,
+                                    )
+                                    self._tooltip(self._num_districts,
+                                                  "Number of districts in the plan.")
+                                with dpg.group():
+                                    self.theme.text("Iterations", "subheading")
+                                    self._iterations = dpg.add_input_int(
+                                        label="##iter", default_value=5000,
+                                        min_value=1, max_value=1_000_000,
+                                        width=-1, step=0,
+                                    )
+                                    self._tooltip(
+                                        self._iterations,
+                                        "Maximum number of proposed map changes. "
+                                        "More iterations take longer but do not "
+                                        "guarantee a better map.")
 
                     dpg.add_spacer(height=8)
-                    with dpg.child_window(width=-1, height=322, border=True,
-                                          tag="panel_goals"):
+                    with dpg.child_window(width=-1, auto_resize_y=True,
+                                          border=True, tag="panel_goals"):
                         self._build_goals_column()
 
                     dpg.add_spacer(height=8)
                     with dpg.child_window(width=-1, height=-1, border=True,
                                           tag="panel_results"):
-                        self.theme.text("Results", "heading")
+                        # The button rides in the heading row: a row of its
+                        # own under the tiles cost the height that made this
+                        # panel scroll on a 925px window.
+                        with self._heading_row("Results"):
+                            dpg.add_button(label="Run details\u2026",
+                                           callback=lambda: dpg.configure_item(
+                                               "popup_run_details", show=True))
                         dpg.add_separator()
                         self._build_result_tiles()
-                        dpg.add_spacer(height=6)
-                        dpg.add_button(label="Run details\u2026", width=-1,
-                                       callback=lambda: dpg.configure_item(
-                                           "popup_run_details", show=True))
 
                 # ── Centre: map toolbar, map, run strip ───────────────────
+                # no_scroll_with_mouse: the column is sized to fit exactly,
+                # and a wheel turn over it must never slide the toolbar out of
+                # view if a frame's measurements are a few pixels out.
                 with dpg.child_window(width=-1, border=False,
-                                      no_scrollbar=True, tag="map_column"):
+                                      no_scrollbar=True,
+                                      no_scroll_with_mouse=True,
+                                      tag="map_column"):
                     self._build_map_toolbar()
                     with dpg.child_window(
                         height=_MAP_H, width=-1, border=True,
@@ -565,12 +590,12 @@ class SetupMixin:
                             dpg.add_spacer(width=1, tag="map_center_pad",
                                            show=False)
                             self._build_map_canvas()
-                    dpg.add_spacer(height=6)
                     self._build_run_strip()
-                    dpg.add_spacer(height=6)
-                    # Score and Entropy keep their place under the run strip
-                    # until step 3 turns them into Visuals cards.
-                    with dpg.group(horizontal=True, tag="main_charts"):
+                    # Score and Entropy are hidden until step 3 turns them into
+                    # Visuals cards, so the map gets the height; Views > Score
+                    # and entropy charts brings them back.
+                    with dpg.group(horizontal=True, tag="main_charts",
+                                   show=False):
                         with dpg.group():
                             self._hint(self.theme.text("Score", "heading"),
                                        "score")
@@ -608,11 +633,29 @@ class SetupMixin:
         dpg.setup_dearpygui()
 
         self.map_view = MapView("map_texture", _MAP_DW, _MAP_DH)
+        self.map_view.fill_opacity = self._fill_opacity_value
         # MapView is constructed after the initial theme application, so copy
         # the active background into it before a shapefile builds its LUT.
         self._sync_map_bg_to_theme()
 
     # ── Left column pieces ────────────────────────────────────────────────────
+
+    @contextmanager
+    def _heading_row(self, label: str):
+        """A panel heading on the left; whatever the block adds on the right.
+
+        The right-hand cell fits its content and the heading takes the rest,
+        so nothing here depends on how wide the panel happens to be.
+        """
+        with dpg.table(header_row=False, policy=dpg.mvTable_SizingFixedFit,
+                       borders_innerH=False, borders_outerH=False,
+                       borders_innerV=False, borders_outerV=False, width=-1):
+            dpg.add_table_column(width_stretch=True, init_width_or_weight=1.0)
+            dpg.add_table_column(width_fixed=True)
+            with dpg.table_row():
+                self.theme.text(label, "heading")
+                with dpg.group(horizontal=True):
+                    yield
 
     def _build_setup_line(self, label: str, factory, attr: str) -> None:
         """A `muted` label on the left, its value on the right.
@@ -623,8 +666,8 @@ class SetupMixin:
         with dpg.table(header_row=False, policy=dpg.mvTable_SizingFixedFit,
                        borders_innerH=False, borders_outerH=False,
                        borders_innerV=False, borders_outerV=False, width=-1):
+            dpg.add_table_column(width_fixed=True, init_width_or_weight=96)
             dpg.add_table_column(width_stretch=True, init_width_or_weight=1.0)
-            dpg.add_table_column(width_fixed=True, init_width_or_weight=150)
             with dpg.table_row():
                 self.theme.text(label, "muted")
                 setattr(self, attr, factory())
@@ -722,33 +765,26 @@ class SetupMixin:
             self._on_run()
 
     def _build_map_toolbar(self) -> None:
-        """Fill, overlays and export, above the map."""
-        with dpg.theme() as toolbar_theme:
-            with dpg.theme_component(dpg.mvTable):
-                dpg.add_theme_style(dpg.mvStyleVar_CellPadding, 4, 1,
-                                    category=dpg.mvThemeCat_Core)
-        with dpg.table(
-            header_row=False, borders_innerH=False, borders_outerH=False,
-            borders_innerV=False, borders_outerV=False, width=-1,
-            policy=dpg.mvTable_SizingFixedFit,
-        ) as map_toolbar:
-            dpg.add_table_column(width_fixed=True)
-            dpg.add_table_column(width_fixed=True)
-            dpg.add_table_column(width_stretch=True, init_width_or_weight=1.0)
-            dpg.add_table_column(width_fixed=True)
-            with dpg.table_row():
-                with dpg.group(horizontal=True):
-                    self.theme.text("Fill", "muted", tag="map_fill_label")
-                    self._fill_combo = dpg.add_combo(
-                        items=self._fill_labels(), default_value=_FILL_NONE,
-                        width=200, callback=self._on_fill_combo)
-                    self._tooltip(
-                        self._fill_combo,
-                        "Color the map by one measure. Unavailable choices "
-                        "show which data they require.")
+        """Fill, overlays, fill opacity and export, directly above the map.
+
+        Two plain rows rather than one table row: the controls do not fit one
+        line beside a 400px scores column at 1440px, and Dear PyGui does not
+        wrap a row. The group's measured height feeds the map's.
+        """
+        with dpg.group(tag="map_toolbar"):
+            with dpg.group(horizontal=True):
+                self.theme.text("Fill", "muted", tag="map_fill_label")
+                self._fill_combo = dpg.add_combo(
+                    items=self._fill_labels(), default_value=_FILL_NONE,
+                    width=190, callback=self._on_fill_combo)
+                self._tooltip(
+                    self._fill_combo,
+                    "Color the map by one measure. Unavailable choices show "
+                    "which data they require.")
                 with dpg.group(horizontal=True, tag="map_overlay_controls"):
                     self._county_overlay = dpg.add_checkbox(
-                        label="Cities", default_value=False,
+                        label=self._place_unit.capitalize(),
+                        default_value=False,
                         callback=self._on_county_overlay_toggle)
                     self._tooltip(self._county_overlay,
                                   "Draw place boundaries over the map.")
@@ -768,26 +804,41 @@ class SetupMixin:
                         self._splits_view,
                         "Highlight places assigned to more than one district. "
                         "Requires a place column.")
-                dpg.add_spacer(width=1)
-                with dpg.group(horizontal=True, tag="map_save_controls"):
-                    self._cam_btn = dpg.add_image_button(
-                        "camera_icon_texture", callback=self._on_save_map,
-                        width=13, height=13)
-                    with dpg.tooltip(self._cam_btn):
-                        dpg.add_text("Save a PNG of the full map.")
-                    self._more_btn = dpg.add_button(
-                        label="Export\u2026",
-                        callback=self._on_advanced_save_open)
-                    with dpg.tooltip(self._more_btn):
-                        dpg.add_text("Save the full map as PNG or PDF.")
-                    self._save_spinner = dpg.add_loading_indicator(
-                        style=0, radius=2.0, show=False,
-                        color=self.theme.color("body"),
-                        secondary_color=self.theme.color("muted"))
-                    dpg.add_spacer(width=4)
-        dpg.bind_item_theme(map_toolbar, toolbar_theme)
-        if self._small_font:
-            dpg.bind_item_font(map_toolbar, self._small_font)
+            with dpg.table(header_row=False, width=-1,
+                           policy=dpg.mvTable_SizingFixedFit,
+                           borders_innerH=False, borders_outerH=False,
+                           borders_innerV=False, borders_outerV=False):
+                dpg.add_table_column(width_stretch=True,
+                                     init_width_or_weight=1.0)
+                dpg.add_table_column(width_fixed=True)
+                with dpg.table_row():
+                    with dpg.group(horizontal=True):
+                        self.theme.text("Fill opacity", "muted")
+                        self._fill_opacity = dpg.add_slider_int(
+                            default_value=int(round(self._fill_opacity_value * 100)),
+                            min_value=0, max_value=100, format="%d%%",
+                            width=150, clamped=True,
+                            callback=self._on_fill_opacity)
+                        self._tooltip(
+                            self._fill_opacity,
+                            "How solid the fill is. Borders, place and "
+                            "precinct lines and labels always stay solid. "
+                            "Applies to exports too.")
+                    with dpg.group(horizontal=True, tag="map_save_controls"):
+                        self._cam_btn = dpg.add_image_button(
+                            "camera_icon_texture", callback=self._on_save_map,
+                            width=13, height=13)
+                        with dpg.tooltip(self._cam_btn):
+                            dpg.add_text("Save a PNG of the full map.")
+                        self._more_btn = dpg.add_button(
+                            label="Export\u2026",
+                            callback=self._on_advanced_save_open)
+                        with dpg.tooltip(self._more_btn):
+                            dpg.add_text("Save the full map as PNG or PDF.")
+                        self._save_spinner = dpg.add_loading_indicator(
+                            style=0, radius=2.0, show=False,
+                            color=self.theme.color("body"),
+                            secondary_color=self.theme.color("muted"))
 
     def _build_map_canvas(self):
         if not self._map_native_input:
@@ -838,36 +889,40 @@ class SetupMixin:
         client_h = dpg.get_viewport_client_height()
         if client_w > 0 and client_h > 0:
             self._shp_dialog.fit_to_viewport(client_w, client_h)
-            self._update_map_height(client_h)
-            self._update_column_widths(client_w)
+            self._update_columns(client_w, client_h)
         self._update_map_fill_width()
         self._sync_map_size()
 
-    def _update_column_widths(self, client_w: int) -> None:
-        """Give the centre column whatever the fixed outer two do not use.
+    def _update_columns(self, client_w: int, client_h: int) -> None:
+        """Size the three columns and the map box from the window.
 
-        A width of -1 would stretch it to the window edge and push the scores
-        column off screen, since Dear PyGui lays the row out left to right
-        without knowing what still has to fit.
+        Widths come from mosaic.gui.layout.column_widths, so all three fit the
+        window instead of the outer two being constants the window may be too
+        narrow for. Heights are set explicitly too: the columns end at the
+        window's bottom edge, and the map box takes whatever the toolbar, the
+        run strip and (when shown) the charts leave, measured rather than
+        assumed, so nothing below the map can be pushed out of the window.
         """
         sp = self.theme.palette.spacing
-        gaps = 2 * sp.window_padding[0] + 2 * sp.item_spacing[0] + 8
-        width = max(320, client_w - _SETUP_W - _SCORES_W - gaps)
-        if dpg.get_item_configuration("map_column")["width"] != width:
-            dpg.configure_item("map_column", width=width)
-
-    def _update_map_height(self, client_h: int) -> None:
-        """Spare height goes to the map, then to the charts under it.
-
-        The three columns are full height; only the map box inside the centre
-        column grows, so the run strip and charts stay put and the map gets
-        every pixel the window gains.
-        """
-        sp = self.theme.palette.spacing
+        setup_w, map_w, scores_w = column_widths(
+            client_w, 2 * sp.window_padding[0] + 2 * sp.item_spacing[0])
         menu_h = dpg.get_item_state("main_menu_bar").get("rect_size", (0, 24))[1]
-        # toolbar + run strip + charts + the gaps between them.
-        fixed = 30 + 74 + _HALF_PLOT_H + 28 + 2 * sp.window_padding[1] + menu_h
-        height = max(220, client_h - fixed)
+        column_h = max(240, int(client_h - menu_h - 2 * sp.window_padding[1]))
+        for tag, width in (("setup_column", setup_w), ("map_column", map_w),
+                           ("scores_column", scores_w)):
+            cfg = dpg.get_item_configuration(tag)
+            if cfg["width"] != width or cfg["height"] != column_h:
+                dpg.configure_item(tag, width=width, height=column_h)
+        self._columns = (setup_w, map_w, scores_w)
+
+        toolbar_h = dpg.get_item_rect_size("map_toolbar")[1]
+        strip_h = dpg.get_item_rect_size("run_strip")[1]
+        if toolbar_h <= 0 or strip_h <= 0:
+            return                      # not laid out yet; next frame
+        charts_h = (dpg.get_item_rect_size("main_charts")[1]
+                    if dpg.is_item_shown("main_charts") else 0)
+        height = map_box_height(column_h, toolbar_h, strip_h, charts_h,
+                                sp.item_spacing[1])
         if dpg.get_item_configuration("map_container")["height"] != height:
             dpg.configure_item("map_container", height=height)
 
@@ -878,13 +933,13 @@ class SetupMixin:
             icon_size = max(1, int(button_height - 2 * self.theme.palette.spacing.frame_padding[1]))
             if dpg.get_item_configuration(self._cam_btn)["height"] != icon_size:
                 dpg.configure_item(self._cam_btn, width=icon_size, height=icon_size)
+        # The Fill combo takes what the overlay checkboxes leave on its row.
         available = dpg.get_item_rect_size("map_container")[0]
         fixed = [dpg.get_item_rect_size(tag)[0] for tag in
-                 ("map_fill_label", "map_overlay_controls", "map_save_controls")]
+                 ("map_fill_label", "map_overlay_controls")]
         if available <= 0 or any(width <= 0 for width in fixed):
             return
-        # Four table cells, the fill-label gap, and clearance for the stretch cell.
         spacing = self.theme.palette.spacing.item_spacing[0]
-        width = max(150, min(225, int(available - sum(fixed) - 32 - spacing - 8)))
+        width = max(120, min(225, int(available - sum(fixed) - 3 * spacing)))
         if dpg.get_item_configuration(self._fill_combo)["width"] != width:
             dpg.configure_item(self._fill_combo, width=width)

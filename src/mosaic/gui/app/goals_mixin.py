@@ -17,7 +17,6 @@ from ._common import (
     _CONTRIB_METRIC_SECTION,
     _GOAL_ORDER,
     _SETTINGS_DIR,
-    _SETUP_W,
     dpg,
     log,
 )
@@ -73,6 +72,9 @@ class GoalsMixin:
         self._goals_sig = None
         self._scores_sig = None
         self._contrib_sig = None
+        # The overlay checkbox draws these boundaries, so it is named for them.
+        dpg.configure_item(self._county_overlay,
+                           label=self._place_unit.capitalize())
 
     # ── Build ─────────────────────────────────────────────────────────────────
 
@@ -86,17 +88,15 @@ class GoalsMixin:
         self._goal_rows: dict[str, dict] = {}
         self._goal_tips: dict = {}
         self._goals_sig = None
-        with dpg.group(horizontal=True):
-            self.theme.text("Goals", "heading")
-            dpg.add_spacer(width=_SETUP_W - 190)
-            btn = dpg.add_button(label="Starting points\u2026", width=120,
+        with self._heading_row("Goals"):
+            btn = dpg.add_button(label="Starting points\u2026",
                                  callback=lambda: dpg.configure_item(
                                      "popup_goal_starters", show=True))
             dpg.bind_item_theme(btn, self.theme.antinudge_theme)
         self._tooltip(btn, "A named set of goal strengths, applied together.")
         dpg.add_separator()
-        self._goal_conflict = self.theme.text("", "warning",
-                                              wrap=_SETUP_W - 24, show=False)
+        self._goal_conflict = self.theme.text("", "warning", wrap=0,
+                                              show=False)
         for gid in _GOAL_ORDER:
             self._build_goal_row(G.GOALS_BY_ID[gid])
         self._build_goal_starters_popup()
@@ -154,13 +154,14 @@ class GoalsMixin:
                            width=-1):
                 dpg.add_table_column(width_stretch=True,
                                      init_width_or_weight=1.0)
-                dpg.add_table_column(width_fixed=True, init_width_or_weight=108)
+                dpg.add_table_column(width_fixed=True, init_width_or_weight=104)
                 dpg.add_table_column(width_fixed=True, init_width_or_weight=20)
                 with dpg.table_row():
                     # "Minority representation" does not fit one line in a
                     # 300px column, so the name wraps as it does in the design.
-                    row["title"] = self.theme.text(
-                        label, "disabled", wrap=_SETUP_W - 180)
+                    # wrap=0 wraps at the cell's own edge, so the break
+                    # follows the column as the window resizes.
+                    row["title"] = self.theme.text(label, "disabled", wrap=0)
                     with dpg.group():
                         with dpg.group(tag=f"goal_ctl_{goal.gid}"):
                             row["combo"] = dpg.add_combo(

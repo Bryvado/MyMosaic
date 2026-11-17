@@ -39,6 +39,7 @@ _ASSETS_DIR   = Path(__file__).resolve().parent.parent.parent / "assets"
 _SETTINGS_DIR = Path(__file__).resolve().parent.parent.parent.parent.parent / ".mosaic"
 _RECENT_FILE  = _SETTINGS_DIR / "recent_shapefiles.json"
 _RECENT_PRESETS_FILE = _SETTINGS_DIR / "recent_presets.json"
+_MAP_STYLE_FILE = _SETTINGS_DIR / "map_style.json"
 _RECENT_MAX   = 10   # entries kept in each Recent menu
 _APP_ICON = _ASSETS_DIR / "mosaic_logo.ico"
 _PDF_PRECINCT_OFF_ALPHA = 0.05   # faint precinct hairlines in PDF even when the overlay is off
@@ -525,7 +526,9 @@ _DIALOG_RM    = 6      # right margin inside the content region for the footer
 _MAP_DH       = _MAP_H - 22            # texture pixel height (~368)
 _PLOT_H       = 155    # single-plot height (score row)
 _MAP_MIN_W    = 400    # the map's width follows the window down to this
-_MIN_CLIENT_W = 1050   # reduced minimum for narrow-layout testing
+_MAP_MIN_H    = 160    # and its height down to this
+# Narrowest client width the three columns fit in; see mosaic.gui.layout.
+_MIN_CLIENT_W = 1080
 _LEFT_GAP     = 5      # leave room for the permanent starting-plan row
 _HALF_PLOT_H  = 136    # Score / Entropy charts; retain ~10 px bottom clearance
 # Further height increases need more _TOP_H space to avoid clipping the x-axis.
@@ -663,6 +666,8 @@ __all__ = [
     "_SETTINGS_DIR",
     "_RECENT_FILE",
     "_RECENT_PRESETS_FILE",
+    "_MAP_STYLE_FILE",
+    "_MAP_MIN_H",
     "_RECENT_MAX",
     "_APP_ICON",
     "_PDF_PRECINCT_OFF_ALPHA",

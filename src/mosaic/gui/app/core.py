@@ -146,6 +146,11 @@ class MosaicApp(*INTERNAL_MIXINS, *_APP_MIXINS):
         self._score_fields: dict = {}
         self._scores_sig = None
         self._run_tiles_lit = None          # last lit count in the run strip
+        self._columns = (300, 600, 440)     # (setup, map, scores) widths now
+        self._charts_item = 0               # Views > Score and entropy charts
+        # Map style kept in .mosaic/map_style.json, not in presets: it is how
+        # the map looks on this machine, not part of a scoring recipe.
+        self._fill_opacity_value = 1.0
         # section -> enabled-checkbox attribute, from MenuMixin._PRESET_SCORES.
         self._goal_chk = {sec: chk for sec, chk, *_ in self._PRESET_SCORES}
 

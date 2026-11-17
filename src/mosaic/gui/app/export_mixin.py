@@ -221,7 +221,10 @@ class ExportMixin:
                      "district_partisan_overlay", "splits_view",
                      "compactness_view", "pop_dev_view", "demographic_overlay",
                      "precinct_demographic_overlay",
-                     "show_labels", "precinct_overlay", "show_district_lines"):
+                     "show_labels", "precinct_overlay", "show_district_lines",
+                     # The export fades its fill exactly as the screen does,
+                     # toward the white page instead of the screen background.
+                     "fill_opacity"):
             setattr(offscreen, flag, getattr(src, flag))
         offscreen.fast_labels = False  # precise label placement for export
         offscreen.state_outline = state_outline
