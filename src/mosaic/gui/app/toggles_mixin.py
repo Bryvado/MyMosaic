@@ -114,9 +114,7 @@ class TogglesMixin:
         dpg.configure_item(panel_tag, show=not visible)
 
     def _on_panel_temp_toggle(self):
-        dpg.configure_item(
-            "panel_temperature", show=dpg.get_value(self._panel_temp_item),
-        )
+        self._visual_menu_toggle("temperature")
 
     def _on_temp_panel_close(self):
         dpg.set_value(self._panel_temp_item, False)
@@ -125,10 +123,10 @@ class TogglesMixin:
         dpg.configure_item("panel_county_splits", show=dpg.get_value(self._panel_cs_item))
 
     def _on_panel_partisan_toggle(self):
-        dpg.configure_item("panel_partisanship", show=dpg.get_value(self._panel_partisan_item))
+        self._visual_menu_toggle("party_share")
 
     def _on_panel_win_chance_toggle(self):
-        dpg.configure_item("panel_win_chance", show=dpg.get_value(self._panel_win_chance_item))
+        self._visual_menu_toggle("win_chance")
 
     def _on_panel_mm_toggle(self):
         dpg.configure_item("panel_mm", show=dpg.get_value(self._panel_mm_item))
@@ -192,13 +190,10 @@ class TogglesMixin:
         dpg.configure_item("panel_hinge", show=dpg.get_value(self._panel_hinge_item))
 
     def _on_panel_contrib_toggle(self):
-        dpg.configure_item("panel_score_contrib", show=dpg.get_value(self._panel_contrib_item))
+        self._visual_menu_toggle("contrib")
 
     def _on_panel_district_toggle(self):
-        showing = dpg.get_value(self._panel_district_item)
-        dpg.configure_item("panel_district_info", show=showing)
-        # Force a fresh update next time we render the panel.
-        self._dist_info_last_iter = -1
+        self._visual_menu_toggle("district_table")
 
     def _on_district_panel_close(self):
         dpg.set_value(self._panel_district_item, False)

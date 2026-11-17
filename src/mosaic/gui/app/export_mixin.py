@@ -1,11 +1,13 @@
 """CSV/metric export and map image save (PNG/PDF workers)."""
+from mosaic import basemap as B
+from mosaic.gui.layout import blend_fill
+from mosaic.gui.map_style import KINDS, default_colors
 from mosaic.gui.map_view import county_split_masks
 
 from ._common import (
     _ASSETS_DIR,
     _MAP_DW,
     _PDF_PRECINCT_OFF_ALPHA,
-    PRECINCT_EDGE_ALPHA,
     MapView,
     Optional,
     Path,
@@ -22,6 +24,17 @@ _EXPORT_FG = (28, 30, 34, 255)
 # Splits view dims un-split counties; on the white page they recede to light grey.
 _EXPORT_SPLITS_DIM = (230, 232, 236, 255)
 _EXPORT_SPLITS_LIGHT = (244, 245, 247, 255)
+
+
+# Points of PDF stroke per pixel of Map style width. The defaults (2.5, 1.5,
+# 0.5px) come out at 0.75, 0.45 and 0.15pt, which is what the PDF drew before
+# widths were adjustable.
+_PT_PER_PX = 0.3
+
+
+def _export_line_colors() -> dict:
+    from mosaic.gui.theme import PALETTES
+    return default_colors(PALETTES["light"])
 
 
 class ExportMixin:
@@ -230,7 +243,12 @@ class ExportMixin:
         offscreen.state_outline = state_outline
         # Half-rate proportionality: doubling DPI grows lines/labels by ~50%,
         # not 100%. Keeps high-DPI exports from over-emphasizing borders.
-        offscreen.border_thickness = max(1, int(round(1 + 0.5 * (scale - 1))))
+        offscreen.line_scale = max(1, int(round(1 + 0.5 * (scale - 1))))
+        # Map style travels with the export. A line the user has not coloured
+        # takes the light theme's default, since the page is white whatever
+        # the screen's theme is.
+        offscreen.style = src.style
+        offscreen.line_colors = _export_line_colors()
 
         dem = (self.runner.election_arrays[0][0]
                if self.runner.election_arrays else None)
@@ -251,7 +269,15 @@ class ExportMixin:
             initial = (self.state.initial_assignment.copy()
                        if self.state.initial_assignment is not None else None)
             n_dist = self.state.num_districts
-        return offscreen.compose_rgba(assignment, n_dist, initial)
+        # The basemap is painted again for this raster: the export covers the
+        # whole map at its own size, not the view on screen.
+        with_basemap = src.basemap_on and self._export_basemap(offscreen)
+        rgba = offscreen.compose_rgba(assignment, n_dist, initial)
+        if rgba is not None and with_basemap:
+            from mosaic.gui.theme import PALETTES
+            B.stamp_attribution(
+                rgba, self._basemap_colors(PALETTES["light"]), scale)
+        return rgba
 
     def _on_save_map(self):
         if self._ensemble_active:
@@ -475,7 +501,14 @@ class ExportMixin:
                     r, g, b = DISTRICT_COLORS[int(ci_arr[i]) % nc]
                     fill_rgba[i] = (r, g, b, 255)
 
-            fill_mpl = fill_rgba[:, :3] / 255.0
+            # Fill opacity. Without a basemap the fill fades toward the white
+            # page, which needs no transparency in the PDF; over a basemap the
+            # fill collection carries the alpha instead (set where it is added).
+            opacity = min(1.0, max(0.0, float(mv.fill_opacity)))
+            line_mpl = {kind: tuple(c / 255 for c in mv.style.color(
+                kind, _export_line_colors())) for kind in KINDS}
+            fill_mpl = (fill_rgba[:, :3] if mv.basemap_on else blend_fill(
+                fill_rgba[:, :3], _EXPORT_BG, opacity)) / 255.0
 
             # ── Matplotlib setup ──────────────────────────────────────────────
             import matplotlib
@@ -555,6 +588,33 @@ class ExportMixin:
             ax.set_xlim(bx0, bx1)
             ax.set_ylim(by0, by1)
 
+            # ── Basemap: the one raster in an otherwise vector page ───────────
+            # Painted for exactly the axes' extent, so it lines up with the
+            # vector precincts drawn over it.
+            pdf_basemap = None
+            if mv.basemap_on:
+                from mosaic.gui.theme import PALETTES
+                px_w = 1800
+                px_h = max(1, int(round(px_w * (by1 - by0) / max(bx1 - bx0, 1e-9))))
+                # A Projection pads its bounds by 4%; undo that so the raster's
+                # edges are the axes' edges.
+                frame = B.Projection((bx0, by0, bx1, by1), px_w, px_h,
+                                     (0.02, 0.02, 0.98, 0.98))
+                try:
+                    pdf_basemap = B.render(
+                        self._basemap_store, self.runner.gdf.crs, frame,
+                        self._basemap_colors(PALETTES["light"]))
+                except Exception:
+                    log.exception("PDF basemap failed")
+                if pdf_basemap is not None and not pdf_basemap.drawn:
+                    pdf_basemap = None
+            if pdf_basemap is not None:
+                left, bottom, right, top = frame.visible_bounds()
+                ax.imshow(pdf_basemap.rgb, extent=(left, right, bottom, top),
+                          zorder=0, interpolation="bilinear", aspect="auto")
+                ax.set_xlim(bx0, bx1)
+                ax.set_ylim(by0, by1)
+
             # ── Gentle geometry simplification to shrink the vector PDF ───────
             # Douglas-Peucker at a fraction of a print pixel (fitted map size at
             # 300 DPI), so the deviation stays sub-pixel and invisible on paper.
@@ -579,15 +639,25 @@ class ExportMixin:
                 colors.append(fill_mpl[i])
             if patches:
                 # Fills: no edges (keeps PDF edge transparency independent)
-                ax.add_collection(
-                    PatchCollection(patches, facecolors=colors, edgecolors='none'),
-                    autolim=False)
+                fills = PatchCollection(patches, facecolors=colors,
+                                        edgecolors='none')
+                if pdf_basemap is not None and opacity < 1.0:
+                    fills.set_alpha(opacity)
+                ax.add_collection(fills, autolim=False)
                 # Precinct boundaries: prominent when the Precincts overlay is on,
                 # near-invisible when off. Stroke-only; set_alpha() writes a PDF /CA.
-                edge_coll = PatchCollection(patches, facecolors='none',
-                                            edgecolors='white', linewidths=0.2)
-                edge_coll.set_alpha(PRECINCT_EDGE_ALPHA if mv.precinct_overlay
-                                    else _PDF_PRECINCT_OFF_ALPHA)
+                # With the overlay on they take the Map style width and colour;
+                # off, a near-invisible white hairline still closes the seams
+                # between neighbouring fills.
+                precinct_pt = mv.style.width("precinct") * _PT_PER_PX
+                if mv.precinct_overlay and precinct_pt > 0:
+                    edge_coll = PatchCollection(
+                        patches, facecolors='none',
+                        edgecolors=[line_mpl["precinct"]], linewidths=precinct_pt)
+                else:
+                    edge_coll = PatchCollection(patches, facecolors='none',
+                                                edgecolors='white', linewidths=0.2)
+                    edge_coll.set_alpha(_PDF_PRECINCT_OFF_ALPHA)
                 ax.add_collection(edge_coll, autolim=False)
 
             # ── Pre-dissolve district & county geometries (fast, avoids
@@ -626,28 +696,34 @@ class ExportMixin:
                         autolim=False)
 
             # ── County borders ────────────────────────────────────────────────
-            if have_county:
-                cty_color = (180 / 255, 180 / 255, 180 / 255)
+            # Splits view is about these lines, so it never hides them.
+            place_pt = mv.style.width("place") * _PT_PER_PX
+            if mv.splits_view:
+                place_pt = max(place_pt, _PT_PER_PX)
+            if have_county and place_pt > 0:
                 for p in cty_paths.values():
                     if p:
                         # Limits are fixed above. add_artist avoids rescanning
                         # every outline vertex for unused autoscale limits.
                         ax.add_artist(PathPatch(p, facecolor="none",
-                                               edgecolor=cty_color,
-                                               linewidth=0.5))
+                                               edgecolor=line_mpl["place"],
+                                               linewidth=place_pt))
 
             # ── District borders (dissolved geoms, no per-precinct loop) ──────
+            district_pt = mv.style.width("district") * _PT_PER_PX
             for p in dist_paths.values():
-                if p and mv.show_district_lines:
+                if p and mv.show_district_lines and district_pt > 0:
                     ax.add_artist(PathPatch(p, facecolor="none",
-                                           edgecolor="black", linewidth=0.7))
+                                           edgecolor=line_mpl["district"],
+                                           linewidth=district_pt))
 
             # ── State outline (union of already-dissolved district geoms) ──────
             state_geometry = geometry.array if coverage else dist_geoms.array
             p = polygon_path(union_geometry(state_geometry, coverage))
             if p:
                 ax.add_artist(PathPatch(p, facecolor="none",
-                                       edgecolor="black", linewidth=1.2))
+                                       edgecolor=line_mpl["district"],
+                                       linewidth=max(1.2, district_pt * 1.6)))
 
             # ── District labels ───────────────────────────────────────────────
             if mv.show_labels:
@@ -719,9 +795,19 @@ class ExportMixin:
                          fontsize=14, fontweight="bold",
                          color=(body_r / 255, body_g / 255, body_b / 255))
 
+            # ── Basemap place names, above the lines like on screen ───────────
+            if pdf_basemap is not None and pdf_basemap.labels is not None:
+                left, bottom, right, top = frame.visible_bounds()
+                ax.imshow(pdf_basemap.labels, extent=(left, right, bottom, top),
+                          zorder=6, interpolation="bilinear", aspect="auto")
+                ax.set_xlim(bx0, bx1)
+                ax.set_ylim(by0, by1)
+
             # ── Caption (80% width, centered in the bottom band) ──────────────
             cap_r, cap_g, cap_b, _ = _EXPORT_FG
-            fig.text(cap_x, cap_y, "Made with Mosaic",
+            fig.text(cap_x, cap_y,
+                     "Made with Mosaic" if pdf_basemap is None
+                     else f"Made with Mosaic.  {B.ATTRIBUTION}",
                      ha="center", va="center", fontsize=7,
                      color=(cap_r / 255, cap_g / 255, cap_b / 255))
 

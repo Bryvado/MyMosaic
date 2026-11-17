@@ -738,8 +738,10 @@ class UpdatesMixin:
                 dpg.set_value(ceiling_series, [[], []])
             dpg.set_axis_limits(y_axis, 0.0, hi + max(1.0, hi * 0.05))
 
-        _render(self._buf_score, "score_series", "score_x", "score_y")
-        _render(self._buf_acc,   "acc_series",   "acc_x",   "acc_y")
+        if dpg.is_item_shown("panel_score"):
+            _render(self._buf_score, "score_series", "score_x", "score_y")
+        if dpg.is_item_shown("panel_entropy"):
+            _render(self._buf_acc,   "acc_series",   "acc_x",   "acc_y")
 
         if dpg.is_item_shown("panel_temperature"):
             _render(self._buf_temp, "panel_temp_series", "panel_temp_x", "panel_temp_y")
@@ -1132,6 +1134,8 @@ class UpdatesMixin:
                 dpg.fit_axis_data("win_chance_x")
                 dpg.set_axis_limits("win_chance_y", 0.0, 100.0)
 
+        self._update_likely_seats()
+
         # District Info table — per-district metrics for the current plan
         self._update_district_info_table()
 
@@ -1349,8 +1353,6 @@ class UpdatesMixin:
 
         # Enable/disable partisan panel menu items; close any open ones when unavailable
         for item_tag, panel_tag in [
-            (self._panel_partisan_item,   "panel_partisanship"),
-            (self._panel_win_chance_item, "panel_win_chance"),
             (self._panel_mm_item,         "panel_mm"),
             (self._panel_eg_item,         "panel_eg"),
             (self._panel_pb_item,         "panel_pb"),

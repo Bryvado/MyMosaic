@@ -42,8 +42,17 @@ def display():
         proc.wait(timeout=10)
 
 
+def _offline_store(folder):
+    from mosaic import basemap
+
+    def offline(url):
+        raise OSError("tests run offline")
+
+    return basemap.TileStore(folder, opener=offline)
+
+
 @pytest.fixture(scope="session")
-def app(display):
+def app(display, tmp_path_factory):
     """The real application, built once: Dear PyGui allows one context per
     process, so every GUI test shares this window."""
     import dearpygui.dearpygui as dpg
@@ -55,6 +64,11 @@ def app(display):
     # Keep the tests out of the user's recent files and saved settings.
     application._push_recent_shapefile = lambda *args, **kwargs: None
     application._save_place_unit = lambda: None
+    application._save_map_style = lambda: None
+    application._save_visuals = lambda: None
+    # No test reaches the network: the tile store fails as if offline unless a
+    # test swaps in its own.
+    application._basemap_store = _offline_store(tmp_path_factory.mktemp("tiles"))
     dpg.show_viewport()
     for _ in range(3):
         application.run_frame()

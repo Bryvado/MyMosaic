@@ -202,7 +202,8 @@ def test_the_map_fills_the_centre_column(app, size):
     assert canvas_h == box_h - 2 * sp.window_padding[1] - 2 * sp.child_border_size
     assert (app.map_view._w, app.map_view._h) == (canvas_w, canvas_h)
     # It is the largest thing in the column, not a strip at the top of it.
-    assert box_h > 0.75 * col_h
+    assert box_h > 0.45 * col_h
+    assert box_h > 1.5 * dpg.get_item_rect_size("visuals_row")[1]
     assert box_w >= col_w - 2
     # Nothing under the map is pushed out of the column.
     (_, strip_y), (_, strip_h) = _column("run_strip")
@@ -234,23 +235,145 @@ def test_the_toolbar_sits_above_the_map(app, size):
     assert dpg.get_y_scroll("map_column") == 0
 
 
-def test_charts_are_hidden_but_reachable(app):
-    assert not dpg.is_item_shown("main_charts")
+def _frames(app, n=4):
+    for _ in range(n):
+        app.run_frame()
+
+
+def _reset_visuals(app):
+    from mosaic.gui.visuals import VisualsState
+    app._visuals = VisualsState()
+    app._visual_placed.clear()
+    _frames(app)
+
+
+@pytest.mark.parametrize("size", SIZES)
+def test_the_default_visuals_dock_in_the_row(app, size):
+    from mosaic.gui import visuals as V
+    _resize(app, *size)
+    _reset_visuals(app)
+    assert app._visuals.row == list(V.DEFAULT_ROW)
+    rx, ry, rw, rh = app._visuals_row_rect()
+    last_right = rx
+    for key in V.DEFAULT_ROW:
+        panel = V.BY_KEY[key].panel
+        assert dpg.is_item_shown(panel), key
+        x, y = dpg.get_item_pos(panel)
+        w, h = dpg.get_item_width(panel), dpg.get_item_height(panel)
+        assert (y, h) == (int(ry), int(rh)) and w >= V.MIN_W
+        assert x >= last_right - 1 and x + w <= rx + rw + 1, key
+        last_right = x + w
+    # The row is inside the window, under the run strip.
+    assert ry + rh <= size[1]
+    (_, strip_y), (_, strip_h) = _column("run_strip")
+    assert dpg.get_item_state("visuals_row")["pos"][1] >= strip_y + strip_h
+    # The plots that used to sit in the centre column are the Score card now.
+    assert dpg.get_item_parent("score_half_plot") == "panel_score"
+
+
+def test_a_visual_floats_docks_pins_and_closes(app):
+    from mosaic.gui import visuals as V
     _resize(app, 1843, 925)
-    without = dpg.get_item_rect_size("map_container")[1]
-    dpg.set_value(app._charts_item, True)
-    dpg.get_item_callback(app._charts_item)()
+    _reset_visuals(app)
+    row = app._visuals_row_rect()
+    panel = V.BY_KEY["score"].panel
+
+    # Let go over the map: it floats where it was dropped.
+    dpg.configure_item(panel, pos=[700, 200])
+    app._drop_visual("score", (720, 210), row)
+    _frames(app)
+    assert "score" in app._visuals.floating and "score" not in app._visuals.row
+    assert dpg.get_item_pos(panel) == [700, 200]
+    assert not dpg.get_item_configuration(panel)["no_resize"]
+    assert dpg.get_item_configuration(panel)["min_size"] == [V.MIN_W, V.MIN_H]
+
+    # A corner resize is picked up and kept.
+    dpg.configure_item(panel, width=420, height=300)
+    _frames(app)
+    assert app._visuals.floating["score"]["size"] == [420, 300]
+
+    # Pinned: it cannot be dropped anywhere else, or resized.
+    app._on_visual_pin(None, None, "score")
+    _frames(app)
+    assert dpg.get_item_configuration(panel)["no_resize"]
+    app._drop_visual("score", (row[0] + 5, row[1] + 5), row)
+    _frames(app)
+    assert "score" in app._visuals.floating
+    app._on_visual_pin(None, None, "score")
+
+    # Unpinned and dropped on the row: back in, at the slot under the pointer.
+    app._drop_visual("score", (row[0] + row[2] - 5, row[1] + 5), row)
+    _frames(app)
+    assert app._visuals.row[-1] == "score" and not app._visuals.floating
+
+    # Closed: gone from the row, and the map takes the height back when the
+    # row is empty.
+    before = dpg.get_item_rect_size("map_container")[1]
+    for key in list(app._visuals.row):
+        app._on_visual_close(None, None, key)
     _resize(app, 1843, 925)
-    assert dpg.is_item_shown("main_charts")
-    (_, _), (_, col_h) = _column("map_column")
-    charts_h = dpg.get_item_rect_size("main_charts")[1]
-    assert charts_h > 100
-    # They take their height from the map rather than falling off the window.
-    assert dpg.get_item_rect_size("map_container")[1] < without - 100
-    dpg.set_value(app._charts_item, False)
-    dpg.get_item_callback(app._charts_item)()
+    assert not dpg.is_item_shown(panel)
+    assert dpg.get_item_rect_size("map_container")[1] > before + 150
+    _reset_visuals(app)
+
+
+def test_the_views_menu_and_the_picker_drive_the_same_cards(app):
     _resize(app, 1843, 925)
-    assert dpg.get_item_rect_size("map_container")[1] == without
+    _reset_visuals(app)
+    dpg.set_value(app._panel_temp_item, True)
+    app._on_panel_temp_toggle()
+    _frames(app)
+    assert app._visuals.is_shown("temperature")
+    assert dpg.is_item_shown("panel_temperature")
+    app._on_visual_pick(None, None, "temperature")       # picked again: removed
+    _frames(app)
+    assert not dpg.is_item_shown("panel_temperature")
+    assert not dpg.get_value(app._panel_temp_item)
+    # The picker lists every visual.
+    app._open_visual_picker()
+    from mosaic.gui.visuals import CATALOG
+    assert len(dpg.get_item_children("visual_picker", 1)) == len(CATALOG)
+    dpg.configure_item("visual_picker", show=False)
+    _reset_visuals(app)
+
+
+def test_a_visual_the_map_cannot_feed_is_not_added(app):
+    _reset_visuals(app)
+    assert app._visual_has().get("batch") is False
+    app._set_visual("batch_hist", True)
+    assert not dpg.does_item_exist("popup_ens_hist")
+    arrays = app.runner.election_arrays
+    app.runner.election_arrays = []
+    try:
+        app._visuals.remove("likely_seats")
+        app._set_visual("likely_seats", True)
+        assert not app._visuals.is_shown("likely_seats")
+    finally:
+        app.runner.election_arrays = arrays
+        _reset_visuals(app)
+
+
+def test_likely_seats_draws_the_plan_on_screen(app):
+    import numpy as np
+    _resize(app, 1843, 925)
+    _reset_visuals(app)
+    n = 14
+    before = (app.state.current_assignment, app.state.num_districts)
+    app.state.update(current_assignment=np.arange(2666) % n, num_districts=n)
+    app._likely_at = 0.0
+    app._likely_sig = None
+    try:
+        _frames(app)
+    finally:
+        app.state.update(current_assignment=before[0], num_districts=before[1])
+    xs, ys = [], []
+    for series in app._likely_series:
+        data = dpg.get_value(series)
+        xs += list(data[0])
+        ys += list(data[1])
+    assert sorted(xs) == list(range(n + 1))
+    assert np.isclose(sum(ys), 100.0, atol=1e-6)
+    assert "Most likely" in dpg.get_value(app._likely_note)
 
 
 @pytest.mark.parametrize("size", SIZES)
@@ -272,35 +395,227 @@ def test_start_from_does_not_repeat_its_label(app):
     assert dpg.get_value(app._hot_start_info) == "Random partition"
 
 
-def test_fill_opacity_reaches_the_map_and_is_saved(app, tmp_path, monkeypatch):
+# ── Fill opacity and the basemap ─────────────────────────────────────────────
+
+@pytest.fixture
+def style_file(app, tmp_path, monkeypatch):
+    """Point map-style saving at a temporary file, and put it back after."""
     from mosaic.gui.app import map_mixin
-
-    monkeypatch.setattr(map_mixin, "_SETTINGS_DIR", tmp_path)
-    monkeypatch.setattr(map_mixin, "_MAP_STYLE_FILE", tmp_path / "map_style.json")
-    assert dpg.get_item_configuration(app._fill_opacity)["max_value"] == 100
-    try:
-        dpg.set_value(app._fill_opacity, 45)
-        app._on_fill_opacity()
-        assert app.map_view.fill_opacity == pytest.approx(0.45)
-        assert '"fill_opacity": 0.45' in (tmp_path / "map_style.json").read_text()
-        # Read back the way the next launch would.
-        app._fill_opacity_value = 1.0
-        app._load_map_style()
-        assert app._fill_opacity_value == pytest.approx(0.45)
-    finally:
-        dpg.set_value(app._fill_opacity, 100)
-        app._on_fill_opacity()
-    assert app.map_view.fill_opacity == 1.0
-
-
-def test_a_missing_or_broken_style_file_keeps_full_opacity(app, tmp_path, monkeypatch):
-    from mosaic.gui.app import map_mixin
+    from mosaic.gui.app.core import MosaicApp
 
     path = tmp_path / "map_style.json"
+    monkeypatch.setattr(map_mixin, "_SETTINGS_DIR", tmp_path)
     monkeypatch.setattr(map_mixin, "_MAP_STYLE_FILE", path)
-    for content in (None, "not json", '{"fill_opacity": 7}', '{"other": 1}'):
+    saved = (app._fill_opacity_value, app._fill_opacity_basemap,
+             dict(app._basemap_choice), dpg.get_value(app._basemap_chk))
+    app._save_map_style = lambda: MosaicApp._save_map_style(app)
+    yield path
+    app._save_map_style = lambda: None
+    app._fill_opacity_value, app._fill_opacity_basemap = saved[0], saved[1]
+    app._basemap_choice = saved[2]
+    dpg.set_value(app._basemap_chk, saved[3])
+    app._apply_fill_opacity()
+
+
+def test_fill_opacity_reaches_the_map_and_is_saved(app, style_file):
+    assert dpg.get_item_configuration(app._fill_opacity)["max_value"] == 100
+    dpg.set_value(app._basemap_chk, False)
+    app._on_basemap_toggle()
+    dpg.set_value(app._fill_opacity, 80)
+    app._on_fill_opacity()
+    assert app.map_view.fill_opacity == pytest.approx(0.80)
+    assert '"fill_opacity": 0.8' in style_file.read_text()
+    # Read back the way the next launch would.
+    app._fill_opacity_value = 1.0
+    app._load_map_style()
+    assert app._fill_opacity_value == pytest.approx(0.80)
+
+
+def test_opacity_is_45_over_a_basemap_and_100_without(app, style_file):
+    """Two settings behind one slider, so switching the basemap off does not
+    leave a washed-out map behind."""
+    from mosaic.gui.app.basemap_mixin import BASEMAP_OPACITY
+
+    app._fill_opacity_value, app._fill_opacity_basemap = 1.0, BASEMAP_OPACITY
+    dpg.set_value(app._basemap_chk, True)
+    app._on_basemap_toggle()
+    assert dpg.get_value(app._fill_opacity) == 45
+    assert app.map_view.fill_opacity == pytest.approx(0.45)
+    dpg.set_value(app._basemap_chk, False)
+    app._on_basemap_toggle()
+    assert dpg.get_value(app._fill_opacity) == 100
+    assert app.map_view.fill_opacity == 1.0
+    # Changing one leaves the other alone.
+    dpg.set_value(app._fill_opacity, 70)
+    app._on_fill_opacity()
+    dpg.set_value(app._basemap_chk, True)
+    app._on_basemap_toggle()
+    assert dpg.get_value(app._fill_opacity) == 45
+
+
+def test_basemap_is_on_for_districts_and_off_for_other_fills(app, style_file):
+    from mosaic.gui.app._common import _FILL_NONE, _FILL_OPTIONS
+
+    app._basemap_choice = {}
+    dpg.set_value(app._fill_combo, _FILL_NONE)
+    app._on_fill_combo()
+    assert dpg.get_value(app._basemap_chk) is True
+    labels = dpg.get_item_configuration(app._fill_combo)["items"]
+    other = next(label for label in labels
+                 if any(label.startswith(name) for name, _a, _n in _FILL_OPTIONS)
+                 and "(" not in label)
+    dpg.set_value(app._fill_combo, other)
+    app._on_fill_combo()
+    assert dpg.get_value(app._basemap_chk) is False, other
+    # The user can still turn it on for that fill, and it is remembered there.
+    dpg.set_value(app._basemap_chk, True)
+    app._on_basemap_toggle()
+    dpg.set_value(app._fill_combo, _FILL_NONE)
+    app._on_fill_combo()
+    dpg.set_value(app._fill_combo, other)
+    app._on_fill_combo()
+    assert dpg.get_value(app._basemap_chk) is True
+    dpg.set_value(app._fill_combo, _FILL_NONE)
+    app._on_fill_combo()
+
+
+def test_offline_draws_without_a_basemap_and_says_so(app, style_file):
+    dpg.set_value(app._basemap_chk, True)
+    app._on_basemap_toggle()
+    app._basemap_key = None
+    assert _pump(app, lambda: app._basemap_key is not None
+                 and app._basemap_job is None, timeout=30)
+    assert app.map_view.basemap is None
+    message = app.state.get("status_message")[0]
+    assert "Basemap unavailable" in message and "Drawing without it" in message
+    # The map still draws.
+    app._redraw_map_now()
+    assert app.map_view._last_rgba is not None
+
+
+def test_basemap_is_painted_off_the_frame_loop_and_credited(app, style_file, tmp_path):
+    from test_basemap import FakeStore
+
+    offline = app._basemap_store
+    app._basemap_store = FakeStore(tmp_path / "tiles", (-79.0, 35.5))
+    try:
+        dpg.set_value(app._basemap_chk, True)
+        app._on_basemap_toggle()
+        app._basemap_key = None
+        frames = 0
+        while app.map_view.basemap is None and frames < 2000:
+            app.run_frame()
+            frames += 1
+        raster = app.map_view.basemap
+        assert raster is not None and raster.drawn
+        assert raster.key == (app.map_view._w, app.map_view._h,
+                              tuple(app.map_view._view_bounds))
+        assert app._basemap_executor is not None      # painted by the worker
+        assert dpg.is_item_shown(app._basemap_credit)
+        assert "OpenFreeMap" in dpg.get_value(app._basemap_credit_text)
+        # The road through the fake world is in the frame the map draws.
+        app._redraw_map_now()
+        frame = app.map_view._last_rgba[..., :3]
+        outside = app.map_view._pixel_map < 0
+        road = tuple(app.theme.palette.basemap_road_major[:3])
+        ground = tuple(app.theme.palette.basemap_ground[:3])
+        assert (frame[outside] == road).all(axis=-1).sum() > 100
+        assert (frame[outside] == ground).all(axis=-1).mean() > 0.9
+        # Switching it off removes the credit and the basemap from the frame.
+        dpg.set_value(app._basemap_chk, False)
+        app._on_basemap_toggle()
+        for _ in range(3):
+            app.run_frame()
+        assert not dpg.is_item_shown(app._basemap_credit)
+        assert app.map_view.basemap_on is False
+    finally:
+        app._basemap_store = offline
+        app._basemap_key = None
+
+
+def test_a_missing_or_broken_style_file_keeps_the_defaults(app, style_file):
+    for content in (None, "not json", '{"fill_opacity": 7}', '{"other": 1}', "[1]"):
         if content is not None:
-            path.write_text(content)
-        app._fill_opacity_value = 1.0
+            style_file.write_text(content)
+        app._fill_opacity_value, app._fill_opacity_basemap = 1.0, 0.45
         app._load_map_style()
-        assert app._fill_opacity_value == 1.0, content
+        assert (app._fill_opacity_value, app._fill_opacity_basemap) == (1.0, 0.45)
+
+
+# ── Map style row ────────────────────────────────────────────────────────────
+
+def test_map_style_row_sits_under_the_map(app):
+    _resize(app, 1440, 900)
+    (_, box_y), (_, box_h) = _column("map_container")
+    row_y = dpg.get_item_state("map_style_row")["pos"][1]
+    (_, strip_y), (_, strip_h) = _column("run_strip")
+    (_, _), (_, col_h) = _column("map_column")
+    assert box_y + box_h <= row_y < strip_y
+    assert strip_y + strip_h <= col_h
+    assert dpg.get_item_rect_size("map_style_row")[0] <= _column("map_column")[1][0]
+
+
+def test_width_and_colour_reach_the_map_and_are_saved(app, style_file):
+    from mosaic.gui.map_style import MapStyle
+
+    try:
+        dpg.set_value(app._style_width["district"], 4.0)
+        dpg.set_value(app._style_width["precinct"], 0.0)
+        app._on_map_style()
+        assert app.map_view.style.width("district") == 4.0
+        assert app.map_view.style.width("precinct") == 0.0
+        app._on_map_style_color(None, [10, 200, 30, 255], "place")
+        assert app.map_view.style.colors["place"] == (10, 200, 30)
+        saved = style_file.read_text()
+        assert '"width": 4.0' in saved and "200" in saved
+        # The next launch reads it back.
+        app._map_style = MapStyle()
+        app._load_map_style()
+        assert app._map_style.width("district") == 4.0
+        assert app._map_style.colors["place"] == (10, 200, 30)
+    finally:
+        app._on_map_style_reset()
+    assert app.map_view.style.widths == {"district": 2.5, "place": 1.5,
+                                         "precinct": 0.5}
+    assert app.map_view.style.colors["place"] is None
+    assert dpg.get_value(app._style_width["district"]) == pytest.approx(2.5)
+
+
+def test_widths_are_limited_to_zero_through_eight(app):
+    for kind in ("district", "place", "precinct"):
+        cfg = dpg.get_item_configuration(app._style_width[kind])
+        assert (cfg["min_value"], cfg["max_value"]) == (0.0, 8.0)
+        assert cfg["min_clamped"] and cfg["max_clamped"]
+
+
+def test_place_line_label_follows_the_place_unit(app):
+    before = app._place_unit
+    try:
+        dpg.set_value(app._place_unit_input, "cities")
+        app._on_place_unit_change()
+        assert dpg.get_value(app._style_label["place"]) == "City lines"
+        assert dpg.get_item_label(app._county_overlay) == "Cities"
+        dpg.set_value(app._place_unit_input, "counties")
+        app._on_place_unit_change()
+        assert dpg.get_value(app._style_label["place"]) == "County lines"
+    finally:
+        dpg.set_value(app._place_unit_input, before)
+        app._on_place_unit_change()
+
+
+def test_default_line_colours_follow_the_theme(app):
+    from mosaic.gui.map_style import default_colors
+    from mosaic.gui.theme import PALETTES
+
+    start = dpg.get_value(app._theme_radio)
+    try:
+        for name, label in (("dark", "Dark"), ("light", "Light")):
+            dpg.set_value(app._theme_radio, label)
+            app._on_theme_change()
+            want = default_colors(PALETTES[name])
+            assert app.map_view.line_colors == want
+            shown = tuple(int(v) for v in dpg.get_value(app._style_color["district"])[:3])
+            assert shown == want["district"]
+    finally:
+        dpg.set_value(app._theme_radio, start)
+        app._on_theme_change()

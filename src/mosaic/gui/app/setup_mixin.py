@@ -1,16 +1,16 @@
 """Builds the main three-column window layout (one large builder)."""
 from contextlib import contextmanager
 
+from mosaic import basemap as B
 from mosaic.gui.layout import column_widths, map_box_height
 from mosaic.gui.map_navigation import MAX_ZOOM
+from mosaic.gui.map_style import MAX_WIDTH, default_colors, line_label
 
 from ._common import (
     _APP_ICON,
     _ASSETS_DIR,
     _CAMERA_ICON_SIZE,
     _FILL_NONE,
-    _HALF_PLOT_H,
-    _HALF_PLOT_W,
     _MAP_DH,
     _MAP_DW,
     _MAP_H,
@@ -153,6 +153,7 @@ class SetupMixin:
         self._build_hinge_panel()
         self._build_district_info_panel()
         self._build_phase_panel()
+        self._build_visual_panels()
 
         # ── Main window ───────────────────────────────────────────────────────
         # The page may scroll on short displays. Map children block wheel
@@ -279,14 +280,6 @@ class SetupMixin:
                 # omits County-Edge Bias (not a score chart) and appends panels
                 # with no score row, such as Temperature and District Info.
                 with dpg.menu(label="Views"):
-                    self._charts_item = dpg.add_menu_item(
-                        label="Score and entropy charts", check=True,
-                        default_value=False,
-                        callback=lambda: dpg.configure_item(
-                            "main_charts",
-                            show=dpg.get_value(self._charts_item)),
-                    )
-                    dpg.add_separator()
                     # ── Geography ── (mirrors the Scores menu 1:1)
                     self._panel_cuts_item = dpg.add_menu_item(
                         label="Cut Edges", check=True, default_value=False,
@@ -590,38 +583,17 @@ class SetupMixin:
                             dpg.add_spacer(width=1, tag="map_center_pad",
                                            show=False)
                             self._build_map_canvas()
+                    # Required wherever the basemap is drawn.
+                    # In a group so its measured height is the whole line:
+                    # a bare text item reports its glyph height, not the frame
+                    # padding Dear PyGui lays it out with.
+                    self._build_map_style_row()
+                    with dpg.group(tag="basemap_credit", show=False) as credit:
+                        self._basemap_credit_text = self.theme.text(
+                            B.ATTRIBUTION, "muted")
+                    self._basemap_credit = credit
                     self._build_run_strip()
-                    # Score and Entropy are hidden until step 3 turns them into
-                    # Visuals cards, so the map gets the height; Views > Score
-                    # and entropy charts brings them back.
-                    with dpg.group(horizontal=True, tag="main_charts",
-                                   show=False):
-                        with dpg.group():
-                            self._hint(self.theme.text("Score", "heading"),
-                                       "score")
-                            with dpg.plot(height=_HALF_PLOT_H,
-                                          tag="score_half_plot",
-                                          width=_HALF_PLOT_W, no_menus=True):
-                                dpg.add_plot_legend()
-                                dpg.add_plot_axis(dpg.mvXAxis, label="Iteration",
-                                                  tag="score_x")
-                                with dpg.plot_axis(dpg.mvYAxis, label="Score",
-                                                   tag="score_y"):
-                                    dpg.add_line_series([], [], label="Score",
-                                                        tag="score_series")
-                        with dpg.group():
-                            self._hint(self.theme.text("Entropy", "heading"),
-                                       "entropy")
-                            with dpg.plot(height=_HALF_PLOT_H, width=-1,
-                                          no_menus=True,
-                                          tag="entropy_half_plot"):
-                                dpg.add_plot_legend()
-                                dpg.add_plot_axis(dpg.mvXAxis, label="Iteration",
-                                                  tag="acc_x")
-                                with dpg.plot_axis(dpg.mvYAxis, label="Rate (%)",
-                                                   tag="acc_y"):
-                                    dpg.add_line_series([], [], label="Accepted",
-                                                        tag="acc_series")
+                    self._build_visuals_row()
 
                 # ── Right: every score, grouped, one line each ────────────
                 with dpg.child_window(width=_SCORES_W, border=True,
@@ -629,11 +601,14 @@ class SetupMixin:
                     self._build_scores_column()
 
         self._refresh_recent_presets_menu()
+        self._wrap_visual_cards()
         dpg.set_primary_window("main_window", True)
         dpg.setup_dearpygui()
 
         self.map_view = MapView("map_texture", _MAP_DW, _MAP_DH)
-        self.map_view.fill_opacity = self._fill_opacity_value
+        self.map_view.style = self._map_style
+        self.map_view.line_colors = default_colors(self.theme.palette)
+        self._sync_basemap_to_fill()
         # MapView is constructed after the initial theme application, so copy
         # the active background into it before a shapefile builds its LUT.
         self._sync_map_bg_to_theme()
@@ -782,6 +757,14 @@ class SetupMixin:
                     "Color the map by one measure. Unavailable choices show "
                     "which data they require.")
                 with dpg.group(horizontal=True, tag="map_overlay_controls"):
+                    self._basemap_chk = dpg.add_checkbox(
+                        label="Basemap", default_value=True,
+                        callback=self._on_basemap_toggle)
+                    self._tooltip(
+                        self._basemap_chk,
+                        "Draw roads, water and place names from OpenFreeMap "
+                        "under the fill. Needs a connection the first time a "
+                        "map is opened; tiles are kept on disk after that.")
                     self._county_overlay = dpg.add_checkbox(
                         label=self._place_unit.capitalize(),
                         default_value=False,
@@ -797,13 +780,6 @@ class SetupMixin:
                         label="Labels", default_value=False,
                         callback=self._on_labels_toggle)
                     self._tooltip(self._show_labels, "Show district numbers.")
-                    self._splits_view = dpg.add_checkbox(
-                        label="Splits", default_value=False, enabled=False,
-                        callback=self._on_splits_view_toggle)
-                    self._tooltip(
-                        self._splits_view,
-                        "Highlight places assigned to more than one district. "
-                        "Requires a place column.")
             with dpg.table(header_row=False, width=-1,
                            policy=dpg.mvTable_SizingFixedFit,
                            borders_innerH=False, borders_outerH=False,
@@ -812,18 +788,9 @@ class SetupMixin:
                                      init_width_or_weight=1.0)
                 dpg.add_table_column(width_fixed=True)
                 with dpg.table_row():
-                    with dpg.group(horizontal=True):
-                        self.theme.text("Fill opacity", "muted")
-                        self._fill_opacity = dpg.add_slider_int(
-                            default_value=int(round(self._fill_opacity_value * 100)),
-                            min_value=0, max_value=100, format="%d%%",
-                            width=150, clamped=True,
-                            callback=self._on_fill_opacity)
-                        self._tooltip(
-                            self._fill_opacity,
-                            "How solid the fill is. Borders, place and "
-                            "precinct lines and labels always stay solid. "
-                            "Applies to exports too.")
+                    self._splits_view = dpg.add_checkbox(
+                        label="Splits", default_value=False, enabled=False,
+                        callback=self._on_splits_view_toggle)
                     with dpg.group(horizontal=True, tag="map_save_controls"):
                         self._cam_btn = dpg.add_image_button(
                             "camera_icon_texture", callback=self._on_save_map,
@@ -839,6 +806,61 @@ class SetupMixin:
                             style=0, radius=2.0, show=False,
                             color=self.theme.color("body"),
                             secondary_color=self.theme.color("muted"))
+            self._tooltip(
+                self._splits_view,
+                "Highlight places assigned to more than one district. "
+                "Requires a place column.")
+
+    def _build_map_style_row(self) -> None:
+        """Width and colour for each kind of line, and the fill's opacity.
+
+        Two rows under the map. A width of 0 hides that line; a colour swatch
+        opens a picker. Everything here applies to the screen and to PNG and
+        PDF exports, and is saved in .mosaic/, not in presets.
+        """
+        self._style_width: dict = {}
+        self._style_color: dict = {}
+        self._style_label: dict = {}
+        defaults = default_colors(self.theme.palette)
+
+        def line(kind: str, label: str, hint: str) -> None:
+            self._style_label[kind] = self.theme.text(label, "muted")
+            self._style_width[kind] = dpg.add_input_float(
+                default_value=self._map_style.width(kind), min_value=0.0,
+                max_value=MAX_WIDTH, min_clamped=True, max_clamped=True,
+                step=0, format="%.1f", width=48, on_enter=False,
+                callback=self._on_map_style)
+            self._tooltip(self._style_width[kind],
+                          f"{hint} Width in pixels, 0 to 8. 0 hides the line.")
+            self._style_color[kind] = dpg.add_color_edit(
+                default_value=self._map_style.color(kind, defaults) + (255,),
+                no_inputs=True, no_label=True, no_alpha=True, no_tooltip=True,
+                callback=self._on_map_style_color, user_data=kind)
+
+        with dpg.group(tag="map_style_row"):
+            with dpg.group(horizontal=True):
+                self.theme.text("Map style", "subheading")
+                line("district", "District borders",
+                     "The lines between districts.")
+                line("place", line_label(self._place_unit),
+                     "The lines between places in the place column.")
+            with dpg.group(horizontal=True):
+                line("precinct", "Precinct lines",
+                     "The lines between precincts.")
+                self.theme.text("Fill opacity", "muted")
+                self._fill_opacity = dpg.add_slider_int(
+                    default_value=int(round(self._fill_opacity_value * 100)),
+                    min_value=0, max_value=100, format="%d%%",
+                    width=130, clamped=True, callback=self._on_fill_opacity)
+                self._tooltip(
+                    self._fill_opacity,
+                    "How solid the fill is: 45% by default over a basemap, "
+                    "100% without one. Lines and labels always stay solid.")
+                reset = dpg.add_button(label="Reset",
+                                       callback=self._on_map_style_reset)
+                dpg.bind_item_theme(reset, self.theme.antinudge_theme)
+                self._tooltip(reset, "Put widths, colours and opacity back "
+                                     "to their defaults.")
 
     def _build_map_canvas(self):
         if not self._map_native_input:
@@ -915,16 +937,18 @@ class SetupMixin:
                 dpg.configure_item(tag, width=width, height=column_h)
         self._columns = (setup_w, map_w, scores_w)
 
-        toolbar_h = dpg.get_item_rect_size("map_toolbar")[1]
-        strip_h = dpg.get_item_rect_size("run_strip")[1]
-        if toolbar_h <= 0 or strip_h <= 0:
+        top = dpg.get_item_state("map_container")["pos"][1]
+        if top <= 0 or dpg.get_item_rect_size("run_strip")[1] <= 0:
             return                      # not laid out yet; next frame
-        charts_h = (dpg.get_item_rect_size("main_charts")[1]
-                    if dpg.is_item_shown("main_charts") else 0)
-        height = map_box_height(column_h, toolbar_h, strip_h, charts_h,
-                                sp.item_spacing[1])
+        below = [dpg.get_item_rect_size(tag)[1] for tag in self._BELOW_MAP
+                 if dpg.does_item_exist(tag) and dpg.is_item_shown(tag)]
+        height = map_box_height(column_h, top, below, sp.item_spacing[1])
         if dpg.get_item_configuration("map_container")["height"] != height:
             dpg.configure_item("map_container", height=height)
+
+    # Blocks under the map, top to bottom. Each one that is shown takes its
+    # measured height out of the map's.
+    _BELOW_MAP = ("basemap_credit", "map_style_row", "run_strip", "visuals_row")
 
     def _update_map_fill_width(self):
         # Image dimensions exclude frame padding; match the adjacent text button.

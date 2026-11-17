@@ -52,13 +52,12 @@ def test_at_1440_the_map_has_room_to_spare():
 
 
 def test_the_map_box_takes_the_height_the_rest_leaves():
-    assert map_box_height(880, 60, 74, 0, 5) == 880 - 60 - 74 - 10
-    with_charts = map_box_height(880, 60, 74, 160, 5)
-    assert with_charts == 880 - 60 - 74 - 160 - 15
+    assert map_box_height(880, 60, [74], 5) == 880 - 60 - 74 - 5
+    assert map_box_height(880, 60, [14, 30, 74, 200], 5) == 880 - 60 - 318 - 20
 
 
 def test_the_map_box_never_collapses():
-    assert map_box_height(200, 60, 74, 160, 5) == 160
+    assert map_box_height(200, 60, [74, 160], 5) == 160
 
 
 # ── Fill opacity ─────────────────────────────────────────────────────────────

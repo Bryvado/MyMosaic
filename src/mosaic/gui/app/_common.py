@@ -13,7 +13,7 @@ import dearpygui.dearpygui as dpg
 import numpy as np
 
 from mosaic import __version__
-from mosaic.gui.map_view import PRECINCT_EDGE_ALPHA, MapView
+from mosaic.gui.map_view import MapView
 from mosaic.gui.runner import AlgorithmRunner
 from mosaic.gui.shp_dialog import ShapefileDialog
 from mosaic.gui.state import AlgorithmStatus, SharedState
@@ -678,7 +678,6 @@ __all__ = [
     "AlgorithmStatus",
     "AlgorithmRunner",
     "MapView",
-    "PRECINCT_EDGE_ALPHA",
     "ShapefileDialog",
     "ThemeManager",
     "ShapefileConfig",
