@@ -132,6 +132,12 @@ class ScoresMixin:
                     if extras:
                         self._build_score_extras(sec, extras)
                     dpg.add_spacer(height=2)
+                    if sec == "alignment":
+                        # Plan Continuity's reference plan, focus and options.
+                        row["settings"] = dpg.add_button(
+                            label="Reference plan\u2026", width=120,
+                            callback=lambda: dpg.configure_item(
+                                "popup_alignment_settings", show=True))
                     panel_tag, item_attr = _SCORE_PANELS[sec]
                     dpg.add_button(
                         label="Open chart", width=92,

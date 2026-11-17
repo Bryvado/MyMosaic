@@ -496,9 +496,11 @@ class SetupMixin:
                         # Plan Continuity's reference plan: which file is
                         # loaded, or "none". Loading one is what makes that
                         # score available, so its status sits with the map.
+                        # Load and Clear sit on the line itself: since the
+                        # redesign nothing else opens the reference-plan picker.
                         self._build_setup_line(
-                            "Reference plan", lambda: self.theme.text(
-                                "none", "muted"), "_alignment_info")
+                            "Reference plan", self._build_reference_plan_value,
+                            "_alignment_info")
                         # The "county" column can hold any place unit; its name
                         # follows into the goal and the score phrases.
                         self._build_setup_line(
@@ -631,6 +633,28 @@ class SetupMixin:
                 self.theme.text(label, "heading")
                 with dpg.group(horizontal=True):
                     yield
+
+    def _build_reference_plan_value(self):
+        """The reference plan's file name, then Load and Clear. Returns the
+        name text so the loaders can keep writing to `_alignment_info`."""
+        # The name wraps and the buttons go under it: a loaded name reads
+        # "file.csv (14 dist, run 13)", too long to share a line at 280px.
+        # One group, because each child of a table row is a new column.
+        with dpg.group():
+            info = self.theme.text("none", "muted", wrap=0)
+            with dpg.group(horizontal=True):
+                self._ref_load_btn = dpg.add_button(
+                    label="Load\u2026", small=True,
+                    callback=self._on_load_alignment)
+                self._tooltip(
+                    self._ref_load_btn,
+                    "Load a plan CSV to compare against. Plan Continuity "
+                    "measures how many people stay in their district.")
+                self._ref_clear_btn = dpg.add_button(
+                    label="Clear", small=True,
+                    callback=self._on_clear_alignment)
+                self._tooltip(self._ref_clear_btn, "Forget the reference plan.")
+        return info
 
     def _build_setup_line(self, label: str, factory, attr: str) -> None:
         """A `muted` label on the left, its value on the right.
