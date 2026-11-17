@@ -35,6 +35,7 @@ import shapely
 from PIL import Image, ImageDraw, ImageFont
 
 from mosaic.gui.layout import blend_fill
+from mosaic.gui.map_style import MapStyle, stroke
 
 log = logging.getLogger("mosaic")
 
@@ -201,8 +202,6 @@ _DEMO_RAMP = np.array(
 
 _BG_COLOR           = np.array([18,  18,  18,  255], dtype=np.uint8)
 _BLANK_COLOR        = np.array([55,  55,  55,  220], dtype=np.uint8)
-_BORDER_RGBA        = np.array([0,   0,   0,   255], dtype=np.uint8)
-_COUNTY_BORDER_RGBA = np.array([180, 180, 180, 255], dtype=np.uint8)
 _SPLITS_DIM_RGBA    = np.array([28,  28,  28,  255], dtype=np.uint8)
 
 
@@ -217,7 +216,6 @@ def county_split_masks(assignment, county_ids, n_districts):
     return touches <= 1, (touches > 1) & ~present[:, shared].any(axis=1)
 
 
-PRECINCT_EDGE_ALPHA = 0.30   # white precinct hairlines when the Precincts overlay is on
 
 # Compactness (Polsby-Popper 0→1): red = not compact, green = compact
 _COMPACT_STOPS = np.array([0.0, 0.25, 0.5, 0.75, 1.0])
@@ -369,10 +367,15 @@ class MapView:
         self.fast_labels: bool = False
         self.precinct_overlay: bool = False          # faint white precinct boundaries
         self.state_outline: bool = False             # black outline around the state's geometry
-        # Multiplier for state/county/district borders and label font size.
-        # 1 = native (on-screen); offscreen export sets this from the DPI scale.
-        # Precinct overlay is intentionally not scaled — it stays a hairline hint.
-        self.border_thickness: int = 1
+        # Width and colour of district borders, place lines and precinct
+        # lines (mosaic.gui.map_style), set from the Map style row. The colours
+        # are the theme defaults a line uses until the user picks one.
+        self.style = MapStyle()
+        self.line_colors = {"district": (0, 0, 0), "place": (180, 180, 180),
+                            "precinct": (150, 156, 168)}
+        # Scale applied to every line width and to label size. 1 on screen; an
+        # export sets it from its DPI so lines keep their weight on paper.
+        self.line_scale: float = 1.0
         # Alpha of the fill layer, 0-1. Lines and labels are drawn after the
         # fill and are never faded. Set from the map toolbar; exports copy it.
         self.fill_opacity: float = 1.0
@@ -671,12 +674,11 @@ class MapView:
         lut[n] = self._bg_color
         return lut
 
-    def _thicken(self, mask: np.ndarray) -> np.ndarray:
-        """Dilate a boolean border mask by (border_thickness - 1) pixels."""
-        if self.border_thickness <= 1:
-            return mask
-        from scipy.ndimage import binary_dilation
-        return binary_dilation(mask, iterations=self.border_thickness - 1)
+    def _line(self, rgba: np.ndarray, mask: np.ndarray, kind: str,
+              min_width: float = 0.0) -> None:
+        """Stroke one kind of line at its styled width and colour."""
+        width = max(self.style.width(kind), min_width) * self.line_scale
+        stroke(rgba, mask, width, self.style.color(kind, self.line_colors))
 
     def _county_border_mask(self, pm: np.ndarray) -> np.ndarray:
         """Boolean mask of pixels that lie on county borders."""
@@ -687,11 +689,11 @@ class MapView:
         cbv = cmap[:, :-1] != cmap[:, 1:]
         vch = (cmap[:-1, :] >= 0) & (cmap[1:, :] >= 0)
         vcv = (cmap[:, :-1] >= 0) & (cmap[:, 1:] >= 0)
+        # One side of each boundary only: a one-pixel line that stroke() grows
+        # to the width asked for. Marking both sides made every line two wide.
         cb = np.zeros(pm.shape, dtype=bool)
         cb[:-1, :] |= cbh & vch
-        cb[1:,  :] |= cbh & vch
         cb[:, :-1] |= cbv & vcv
-        cb[:, 1:]  |= cbv & vcv
         return cb
 
     def _clear_raster_caches(self):
@@ -726,9 +728,7 @@ class MapView:
                 v = (pm[:, :-1] != pm[:, 1:]) & (pm[:, :-1] >= 0) & (pm[:, 1:] >= 0)
                 mask = np.zeros(pm.shape, dtype=bool)
                 mask[:-1, :] |= h
-                mask[1:, :] |= h
                 mask[:, :-1] |= v
-                mask[:, 1:] |= v
             elif kind == "state":
                 valid = pm >= 0
                 mask = np.zeros(pm.shape, dtype=bool)
@@ -858,22 +858,21 @@ class MapView:
         if base is not None:
             self._fill_over_basemap(rgba, base)
 
-        if self.splits_view and self._county_array is not None:
-            # County borders always visible in splits view
-            rgba[self._thicken(self._static_border_mask("county"))] = _COUNTY_BORDER_RGBA
+        # Layer order from docs/design/map.md: precinct lines, then place
+        # lines, then district borders, each at its Map style width and colour.
+        # A width of 0 hides a line whatever its checkbox says.
 
-        # ── County overlay (border lines only, when not using splits view) ────
-        elif self.county_overlay and self._county_array is not None:
-            rgba[self._thicken(self._static_border_mask("county"))] = _COUNTY_BORDER_RGBA
-
-        # ── Precinct boundaries (faint white, alpha-blended) ─────────────────
+        # ── Precinct lines ───────────────────────────────────────────────────
         if self.precinct_overlay:
-            pb_mask = self._static_border_mask("precinct")
-            if pb_mask.any():
-                alpha = PRECINCT_EDGE_ALPHA
-                blended = rgba[pb_mask].astype(np.float32)
-                blended[:, :3] = blended[:, :3] * (1.0 - alpha) + 255.0 * alpha
-                rgba[pb_mask] = blended.astype(np.uint8)
+            self._line(rgba, self._static_border_mask("precinct"), "precinct")
+
+        # ── Place (county or city) lines ─────────────────────────────────────
+        if self.splits_view and self._county_array is not None:
+            # Splits view is about these lines, so it never draws them hidden.
+            self._line(rgba, self._static_border_mask("county"), "place",
+                       min_width=1.0)
+        elif self.county_overlay and self._county_array is not None:
+            self._line(rgba, self._static_border_mask("county"), "place")
 
         # ── District borders (over precinct boundaries) ──────────────────────
         if self.show_district_lines:
@@ -884,15 +883,13 @@ class MapView:
             vv = (dist_map[:, :-1] >= 0) & (dist_map[:, 1:] >= 0)
             border = np.zeros(pm.shape, dtype=bool)
             border[:-1, :] |= bh & vh
-            border[1:,  :] |= bh & vh
             border[:, :-1] |= bv & vv
-            border[:, 1:]  |= bv & vv
-            rgba[self._thicken(border)] = _BORDER_RGBA
+            self._line(rgba, border, "district")
 
         # ── State outline (above district borders so it's a clean edge) ──────
         if self.state_outline:
             so = self._static_border_mask("state")
-            rgba[self._thicken(so)] = _BORDER_RGBA
+            self._line(rgba, so, "district", min_width=1.0)
 
         # ── Basemap place names: above the borders, below district labels ────
         if base is not None:
@@ -978,10 +975,11 @@ class MapView:
                      np.bincount(assignment, minlength=n_districts))
             centers = sorted(centers, key=lambda c: -areas[c[0]])
 
-            # Greedy collision avoidance — scale glyph size with border_thickness
+            # Greedy collision avoidance — scale glyph size with line_scale
             # so labels stay legible at high-DPI exports.
-            font_h = 14 * self.border_thickness
-            char_w = 8 * self.border_thickness
+            label_scale = max(1, int(round(self.line_scale)))
+            font_h = 14 * label_scale
+            char_w = 8 * label_scale
             placed_boxes = []
             labels_to_draw = []
 
@@ -1003,9 +1001,9 @@ class MapView:
                     placed_boxes.append(box)
                     labels_to_draw.append((int(cx), int(cy), label))
 
-            # Blend cached label stamps (outline scales with border_thickness
+            # Blend cached label stamps (outline scales with line_scale
             # so it stays visible against high-DPI glyphs).
-            stroke_w = max(1, self.border_thickness)
+            stroke_w = label_scale
             for px, py, text in labels_to_draw:
                 stamp, ax, ay = _label_stamp(text, font_h, stroke_w)
                 _blend_stamp(rgba, stamp, px - ax, py - ay)

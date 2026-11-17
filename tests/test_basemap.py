@@ -17,6 +17,7 @@ from mvt import encode_tile
 from pyproj import Transformer
 
 from mosaic import basemap as B
+from mosaic.gui.map_style import MapStyle
 from mosaic.gui.map_view import MapView
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -285,6 +286,10 @@ def nc_view():
     order = np.argsort(gdf.geometry.bounds["minx"].values)
     assignment = np.empty(len(gdf), dtype=np.int32)
     assignment[order] = np.arange(len(gdf)) * 6 // len(gdf)
+    # Whole-pixel black borders, so a border pixel is told from fill by colour.
+    view.style = MapStyle(widths={"district": 2.0, "place": 1.0, "precinct": 1.0})
+    view.line_colors = {"district": (0, 0, 0), "place": (180, 180, 180),
+                        "precinct": (255, 0, 255)}
     return view, assignment
 
 
@@ -302,7 +307,10 @@ def test_the_fill_is_composited_over_the_basemap(nc_view):
     view.basemap, view.basemap_on, view.fill_opacity = None, False, 1.0
     plain = view.compose_rgba(assignment, 6).astype(np.int32)
     view.basemap, view.basemap_on, view.fill_opacity = _basemap_for(view), True, 0.45
-    over = view.compose_rgba(assignment, 6).astype(np.int32)
+    try:
+        over = view.compose_rgba(assignment, 6).astype(np.int32)
+    finally:
+        view.basemap, view.basemap_on, view.fill_opacity = None, False, 1.0
     inside = view._pixel_map >= 0
     lines = (plain[..., :3] == 0).all(axis=-1)
     fill = inside & ~lines
@@ -312,11 +320,14 @@ def test_the_fill_is_composited_over_the_basemap(nc_view):
     # Outside the precincts the basemap shows through as context.
     outside = ~inside
     outside[5:9, 5:9] = False
-    assert (over[outside][:, :3] == [10, 200, 30]).all()
+    # (A border's second pixel can fall just outside where it meets the coast.)
+    beyond = over[outside][:, :3]
+    plain_basemap = (beyond == [10, 200, 30]).all(axis=-1)
+    assert plain_basemap.mean() > 0.999
+    assert (beyond[~plain_basemap] == 0).all()
     # District borders are untouched; place names sit on top of everything.
     assert (over[lines & inside][:, :3] == 0).all()
     assert (over[5:9, 5:9, :3] == 255).all()
-    view.basemap, view.basemap_on, view.fill_opacity = None, False, 1.0
 
 
 def test_a_basemap_for_another_raster_is_ignored(nc_view):

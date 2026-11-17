@@ -1,13 +1,13 @@
 """CSV/metric export and map image save (PNG/PDF workers)."""
 from mosaic import basemap as B
 from mosaic.gui.layout import blend_fill
+from mosaic.gui.map_style import KINDS, default_colors
 from mosaic.gui.map_view import county_split_masks
 
 from ._common import (
     _ASSETS_DIR,
     _MAP_DW,
     _PDF_PRECINCT_OFF_ALPHA,
-    PRECINCT_EDGE_ALPHA,
     MapView,
     Optional,
     Path,
@@ -24,6 +24,17 @@ _EXPORT_FG = (28, 30, 34, 255)
 # Splits view dims un-split counties; on the white page they recede to light grey.
 _EXPORT_SPLITS_DIM = (230, 232, 236, 255)
 _EXPORT_SPLITS_LIGHT = (244, 245, 247, 255)
+
+
+# Points of PDF stroke per pixel of Map style width. The defaults (2.5, 1.5,
+# 0.5px) come out at 0.75, 0.45 and 0.15pt, which is what the PDF drew before
+# widths were adjustable.
+_PT_PER_PX = 0.3
+
+
+def _export_line_colors() -> dict:
+    from mosaic.gui.theme import PALETTES
+    return default_colors(PALETTES["light"])
 
 
 class ExportMixin:
@@ -232,7 +243,12 @@ class ExportMixin:
         offscreen.state_outline = state_outline
         # Half-rate proportionality: doubling DPI grows lines/labels by ~50%,
         # not 100%. Keeps high-DPI exports from over-emphasizing borders.
-        offscreen.border_thickness = max(1, int(round(1 + 0.5 * (scale - 1))))
+        offscreen.line_scale = max(1, int(round(1 + 0.5 * (scale - 1))))
+        # Map style travels with the export. A line the user has not coloured
+        # takes the light theme's default, since the page is white whatever
+        # the screen's theme is.
+        offscreen.style = src.style
+        offscreen.line_colors = _export_line_colors()
 
         dem = (self.runner.election_arrays[0][0]
                if self.runner.election_arrays else None)
@@ -489,6 +505,8 @@ class ExportMixin:
             # page, which needs no transparency in the PDF; over a basemap the
             # fill collection carries the alpha instead (set where it is added).
             opacity = min(1.0, max(0.0, float(mv.fill_opacity)))
+            line_mpl = {kind: tuple(c / 255 for c in mv.style.color(
+                kind, _export_line_colors())) for kind in KINDS}
             fill_mpl = (fill_rgba[:, :3] if mv.basemap_on else blend_fill(
                 fill_rgba[:, :3], _EXPORT_BG, opacity)) / 255.0
 
@@ -628,10 +646,18 @@ class ExportMixin:
                 ax.add_collection(fills, autolim=False)
                 # Precinct boundaries: prominent when the Precincts overlay is on,
                 # near-invisible when off. Stroke-only; set_alpha() writes a PDF /CA.
-                edge_coll = PatchCollection(patches, facecolors='none',
-                                            edgecolors='white', linewidths=0.2)
-                edge_coll.set_alpha(PRECINCT_EDGE_ALPHA if mv.precinct_overlay
-                                    else _PDF_PRECINCT_OFF_ALPHA)
+                # With the overlay on they take the Map style width and colour;
+                # off, a near-invisible white hairline still closes the seams
+                # between neighbouring fills.
+                precinct_pt = mv.style.width("precinct") * _PT_PER_PX
+                if mv.precinct_overlay and precinct_pt > 0:
+                    edge_coll = PatchCollection(
+                        patches, facecolors='none',
+                        edgecolors=[line_mpl["precinct"]], linewidths=precinct_pt)
+                else:
+                    edge_coll = PatchCollection(patches, facecolors='none',
+                                                edgecolors='white', linewidths=0.2)
+                    edge_coll.set_alpha(_PDF_PRECINCT_OFF_ALPHA)
                 ax.add_collection(edge_coll, autolim=False)
 
             # ── Pre-dissolve district & county geometries (fast, avoids
@@ -670,28 +696,34 @@ class ExportMixin:
                         autolim=False)
 
             # ── County borders ────────────────────────────────────────────────
-            if have_county:
-                cty_color = (180 / 255, 180 / 255, 180 / 255)
+            # Splits view is about these lines, so it never hides them.
+            place_pt = mv.style.width("place") * _PT_PER_PX
+            if mv.splits_view:
+                place_pt = max(place_pt, _PT_PER_PX)
+            if have_county and place_pt > 0:
                 for p in cty_paths.values():
                     if p:
                         # Limits are fixed above. add_artist avoids rescanning
                         # every outline vertex for unused autoscale limits.
                         ax.add_artist(PathPatch(p, facecolor="none",
-                                               edgecolor=cty_color,
-                                               linewidth=0.5))
+                                               edgecolor=line_mpl["place"],
+                                               linewidth=place_pt))
 
             # ── District borders (dissolved geoms, no per-precinct loop) ──────
+            district_pt = mv.style.width("district") * _PT_PER_PX
             for p in dist_paths.values():
-                if p and mv.show_district_lines:
+                if p and mv.show_district_lines and district_pt > 0:
                     ax.add_artist(PathPatch(p, facecolor="none",
-                                           edgecolor="black", linewidth=0.7))
+                                           edgecolor=line_mpl["district"],
+                                           linewidth=district_pt))
 
             # ── State outline (union of already-dissolved district geoms) ──────
             state_geometry = geometry.array if coverage else dist_geoms.array
             p = polygon_path(union_geometry(state_geometry, coverage))
             if p:
                 ax.add_artist(PathPatch(p, facecolor="none",
-                                       edgecolor="black", linewidth=1.2))
+                                       edgecolor=line_mpl["district"],
+                                       linewidth=max(1.2, district_pt * 1.6)))
 
             # ── District labels ───────────────────────────────────────────────
             if mv.show_labels:

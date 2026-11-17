@@ -202,7 +202,7 @@ def test_the_map_fills_the_centre_column(app, size):
     assert canvas_h == box_h - 2 * sp.window_padding[1] - 2 * sp.child_border_size
     assert (app.map_view._w, app.map_view._h) == (canvas_w, canvas_h)
     # It is the largest thing in the column, not a strip at the top of it.
-    assert box_h > 0.75 * col_h
+    assert box_h > 0.65 * col_h
     assert box_w >= col_w - 2
     # Nothing under the map is pushed out of the column.
     (_, strip_y), (_, strip_h) = _column("run_strip")
@@ -417,3 +417,82 @@ def test_a_missing_or_broken_style_file_keeps_the_defaults(app, style_file):
         app._fill_opacity_value, app._fill_opacity_basemap = 1.0, 0.45
         app._load_map_style()
         assert (app._fill_opacity_value, app._fill_opacity_basemap) == (1.0, 0.45)
+
+
+# ── Map style row ────────────────────────────────────────────────────────────
+
+def test_map_style_row_sits_under_the_map(app):
+    _resize(app, 1440, 900)
+    (_, box_y), (_, box_h) = _column("map_container")
+    row_y = dpg.get_item_state("map_style_row")["pos"][1]
+    (_, strip_y), (_, strip_h) = _column("run_strip")
+    (_, _), (_, col_h) = _column("map_column")
+    assert box_y + box_h <= row_y < strip_y
+    assert strip_y + strip_h <= col_h
+    assert dpg.get_item_rect_size("map_style_row")[0] <= _column("map_column")[1][0]
+
+
+def test_width_and_colour_reach_the_map_and_are_saved(app, style_file):
+    from mosaic.gui.map_style import MapStyle
+
+    try:
+        dpg.set_value(app._style_width["district"], 4.0)
+        dpg.set_value(app._style_width["precinct"], 0.0)
+        app._on_map_style()
+        assert app.map_view.style.width("district") == 4.0
+        assert app.map_view.style.width("precinct") == 0.0
+        app._on_map_style_color(None, [10, 200, 30, 255], "place")
+        assert app.map_view.style.colors["place"] == (10, 200, 30)
+        saved = style_file.read_text()
+        assert '"width": 4.0' in saved and "200" in saved
+        # The next launch reads it back.
+        app._map_style = MapStyle()
+        app._load_map_style()
+        assert app._map_style.width("district") == 4.0
+        assert app._map_style.colors["place"] == (10, 200, 30)
+    finally:
+        app._on_map_style_reset()
+    assert app.map_view.style.widths == {"district": 2.5, "place": 1.5,
+                                         "precinct": 0.5}
+    assert app.map_view.style.colors["place"] is None
+    assert dpg.get_value(app._style_width["district"]) == pytest.approx(2.5)
+
+
+def test_widths_are_limited_to_zero_through_eight(app):
+    for kind in ("district", "place", "precinct"):
+        cfg = dpg.get_item_configuration(app._style_width[kind])
+        assert (cfg["min_value"], cfg["max_value"]) == (0.0, 8.0)
+        assert cfg["min_clamped"] and cfg["max_clamped"]
+
+
+def test_place_line_label_follows_the_place_unit(app):
+    before = app._place_unit
+    try:
+        dpg.set_value(app._place_unit_input, "cities")
+        app._on_place_unit_change()
+        assert dpg.get_value(app._style_label["place"]) == "City lines"
+        assert dpg.get_item_label(app._county_overlay) == "Cities"
+        dpg.set_value(app._place_unit_input, "counties")
+        app._on_place_unit_change()
+        assert dpg.get_value(app._style_label["place"]) == "County lines"
+    finally:
+        dpg.set_value(app._place_unit_input, before)
+        app._on_place_unit_change()
+
+
+def test_default_line_colours_follow_the_theme(app):
+    from mosaic.gui.map_style import default_colors
+    from mosaic.gui.theme import PALETTES
+
+    start = dpg.get_value(app._theme_radio)
+    try:
+        for name, label in (("dark", "Dark"), ("light", "Light")):
+            dpg.set_value(app._theme_radio, label)
+            app._on_theme_change()
+            want = default_colors(PALETTES[name])
+            assert app.map_view.line_colors == want
+            shown = tuple(int(v) for v in dpg.get_value(app._style_color["district"])[:3])
+            assert shown == want["district"]
+    finally:
+        dpg.set_value(app._theme_radio, start)
+        app._on_theme_change()

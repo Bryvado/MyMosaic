@@ -14,7 +14,8 @@ import geopandas as gpd
 import numpy as np
 import pytest
 
-from mosaic.gui.map_view import PRECINCT_EDGE_ALPHA, MapView
+from mosaic.gui.map_style import MapStyle
+from mosaic.gui.map_view import MapView
 
 ROOT = Path(__file__).resolve().parents[1]
 SHAPEFILE = ROOT / "shapefiles" / "North_Carolina_Simplified.shp"
@@ -36,6 +37,11 @@ def loaded():
 
 
 def _frame(view, assignment, opacity, **flags):
+    # Whole-pixel widths, so every line pixel is solid colour and the tests
+    # can tell a line from fill by its colour alone.
+    view.style = MapStyle(widths={"district": 2.0, "place": 1.0, "precinct": 1.0})
+    view.line_colors = {"district": (0, 0, 0), "place": (180, 180, 180),
+                        "precinct": (255, 0, 255)}
     for name in ("county_overlay", "precinct_overlay", "show_labels",
                  "district_partisan_overlay", "partisan_overlay"):
         setattr(view, name, flags.get(name, False))
@@ -76,17 +82,14 @@ def test_place_lines_stay_solid(loaded):
     assert (faded[lines] == solid[lines]).all()
 
 
-def test_precinct_lines_keep_their_own_strength(loaded):
-    """Precinct lines are a translucent hairline by design. Fading the fill
-    must not fade the line with it: over a faded fill the line is the same
-    blend of white it always was."""
+def test_precinct_lines_stay_solid(loaded):
+    """Fading the fill must not fade the lines drawn over it."""
     view, assignment = loaded
     under = _frame(view, assignment, 0.3)
     over = _frame(view, assignment, 0.3, precinct_overlay=True)
     lines = (over != under).any(axis=-1)
     assert lines.sum() > 500
-    want = under[lines][:, :3] * (1 - PRECINCT_EDGE_ALPHA) + 255 * PRECINCT_EDGE_ALPHA
-    assert np.abs(over[lines][:, :3] - want).max() <= 1
+    assert (over[lines][:, :3] == (255, 0, 255)).all()
 
 
 def test_labels_stay_solid(loaded):

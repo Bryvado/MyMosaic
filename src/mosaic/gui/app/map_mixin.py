@@ -5,6 +5,7 @@ from concurrent.futures import ThreadPoolExecutor
 from queue import Empty, SimpleQueue
 
 from mosaic.gui.map_navigation import FIT_VIEW, MAX_ZOOM, MapViewport
+from mosaic.gui.map_style import KINDS, MAX_WIDTH, MapStyle, default_colors, line_label
 from mosaic.gui.map_view import MapView
 
 from ._common import (
@@ -48,6 +49,14 @@ def _resized_view_bounds(view, old_size, new_size, geographic_bounds):
     x = min(max(cx - span / 2, 0.0), 1.0 - span)
     y = min(max(cy - span / 2, 0.0), 1.0 - span)
     return (x, y, x + span, y + span)
+
+
+def _rgb255(value) -> tuple[int, int, int]:
+    """A Dear PyGui colour value as 0-255 integers, whichever scale it uses."""
+    rgb = [float(v) for v in list(value)[:3]]
+    if all(v <= 1.0 for v in rgb) and any(0.0 < v < 1.0 for v in rgb):
+        rgb = [v * 255.0 for v in rgb]
+    return tuple(int(round(min(255.0, max(0.0, v)))) for v in rgb)
 
 
 class MapMixin:
@@ -482,6 +491,7 @@ class MapMixin:
         self._sync_map_bg_to_theme()
         self._sync_ref_lines_to_theme()
         self._sync_camera_icon_to_theme()
+        self._sync_map_style_widgets()  # default line colours are theme tokens
         self._phase_apply_fade()        # repaint phase trail for the new palette
         self._sync_ensemble_theme()
         # The run-strip tiles are drawlist rectangles, not themed widgets, so
@@ -668,6 +678,9 @@ class MapMixin:
         choice = data.get("basemap")
         if isinstance(choice, dict):
             self._basemap_choice = {str(k): bool(v) for k, v in choice.items()}
+        self._map_style = MapStyle.from_json(data.get("lines"))
+        if self.map_view is not None:     # the map draws from this object
+            self.map_view.style = self._map_style
 
     def _save_map_style(self) -> None:
         import json
@@ -676,10 +689,47 @@ class MapMixin:
             _MAP_STYLE_FILE.write_text(
                 json.dumps({"fill_opacity": self._fill_opacity_value,
                             "fill_opacity_basemap": self._fill_opacity_basemap,
-                            "basemap": self._basemap_choice}, indent=2),
+                            "basemap": self._basemap_choice,
+                            "lines": self._map_style.to_json()}, indent=2),
                 encoding="utf-8")
         except Exception:
             pass
+
+    def _on_map_style(self):
+        """A width field changed."""
+        for kind, field in self._style_width.items():
+            value = float(dpg.get_value(field))
+            self._map_style.widths[kind] = min(MAX_WIDTH, max(0.0, value))
+        self._save_map_style()
+        self._redraw_map_now()
+
+    def _on_map_style_color(self, sender, value, kind):
+        """A swatch's picker chose a colour for one kind of line."""
+        self._map_style.colors[kind] = _rgb255(value)
+        self._save_map_style()
+        self._redraw_map_now()
+
+    def _on_map_style_reset(self):
+        self._map_style = MapStyle()
+        if self.map_view is not None:
+            self.map_view.style = self._map_style
+        self._fill_opacity_value, self._fill_opacity_basemap = 1.0, 0.45
+        self._sync_map_style_widgets()
+        self._apply_fill_opacity()
+        self._save_map_style()
+        self._redraw_map_now()
+
+    def _sync_map_style_widgets(self):
+        """Show the style in its row; lines the user has not coloured show the
+        theme's default, so the swatches follow a light/dark switch."""
+        defaults = default_colors(self.theme.palette)
+        if self.map_view is not None:
+            self.map_view.line_colors = defaults
+        for kind in KINDS:
+            dpg.set_value(self._style_width[kind], self._map_style.width(kind))
+            dpg.set_value(self._style_color[kind],
+                          list(self._map_style.color(kind, defaults)) + [255])
+        dpg.set_value(self._style_label["place"], line_label(self._place_unit))
 
     def _on_fill_opacity(self):
         """The toolbar slider: fade the fill, leave lines and labels solid."""

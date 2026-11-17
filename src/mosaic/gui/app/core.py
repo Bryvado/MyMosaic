@@ -5,6 +5,8 @@ state. Private extensions may attach through the optional ``_internal`` seam.
 """
 from queue import Empty, SimpleQueue
 
+from mosaic.gui.map_style import MapStyle
+
 from ._common import (
     _DIALOG_BTN_W,
     _DIALOG_GAP,
@@ -154,6 +156,7 @@ class MosaicApp(*INTERNAL_MIXINS, *_APP_MIXINS):
         # Map style kept in .mosaic/map_style.json, not in presets: it is how
         # the map looks on this machine, not part of a scoring recipe.
         self._fill_opacity_value = 1.0
+        self._map_style = MapStyle()        # line widths and colours
         # section -> enabled-checkbox attribute, from MenuMixin._PRESET_SCORES.
         self._goal_chk = {sec: chk for sec, chk, *_ in self._PRESET_SCORES}
 

@@ -75,6 +75,8 @@ class GoalsMixin:
         # The overlay checkbox draws these boundaries, so it is named for them.
         dpg.configure_item(self._county_overlay,
                            label=self._place_unit.capitalize())
+        # ... and so is their line in Map style: "City lines", "County lines".
+        self._sync_map_style_widgets()
 
     # ── Build ─────────────────────────────────────────────────────────────────
 

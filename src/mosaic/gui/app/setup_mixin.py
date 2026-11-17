@@ -4,6 +4,7 @@ from contextlib import contextmanager
 from mosaic import basemap as B
 from mosaic.gui.layout import column_widths, map_box_height
 from mosaic.gui.map_navigation import MAX_ZOOM
+from mosaic.gui.map_style import MAX_WIDTH, default_colors, line_label
 
 from ._common import (
     _APP_ICON,
@@ -595,6 +596,7 @@ class SetupMixin:
                     # In a group so its measured height is the whole line:
                     # a bare text item reports its glyph height, not the frame
                     # padding Dear PyGui lays it out with.
+                    self._build_map_style_row()
                     with dpg.group(tag="basemap_credit", show=False) as credit:
                         self._basemap_credit_text = self.theme.text(
                             B.ATTRIBUTION, "muted")
@@ -642,6 +644,8 @@ class SetupMixin:
         dpg.setup_dearpygui()
 
         self.map_view = MapView("map_texture", _MAP_DW, _MAP_DH)
+        self.map_view.style = self._map_style
+        self.map_view.line_colors = default_colors(self.theme.palette)
         self._sync_basemap_to_fill()
         # MapView is constructed after the initial theme application, so copy
         # the active background into it before a shapefile builds its LUT.
@@ -814,13 +818,6 @@ class SetupMixin:
                         label="Labels", default_value=False,
                         callback=self._on_labels_toggle)
                     self._tooltip(self._show_labels, "Show district numbers.")
-                    self._splits_view = dpg.add_checkbox(
-                        label="Splits", default_value=False, enabled=False,
-                        callback=self._on_splits_view_toggle)
-                    self._tooltip(
-                        self._splits_view,
-                        "Highlight places assigned to more than one district. "
-                        "Requires a place column.")
             with dpg.table(header_row=False, width=-1,
                            policy=dpg.mvTable_SizingFixedFit,
                            borders_innerH=False, borders_outerH=False,
@@ -829,18 +826,9 @@ class SetupMixin:
                                      init_width_or_weight=1.0)
                 dpg.add_table_column(width_fixed=True)
                 with dpg.table_row():
-                    with dpg.group(horizontal=True):
-                        self.theme.text("Fill opacity", "muted")
-                        self._fill_opacity = dpg.add_slider_int(
-                            default_value=int(round(self._fill_opacity_value * 100)),
-                            min_value=0, max_value=100, format="%d%%",
-                            width=150, clamped=True,
-                            callback=self._on_fill_opacity)
-                        self._tooltip(
-                            self._fill_opacity,
-                            "How solid the fill is. Borders, place and "
-                            "precinct lines and labels always stay solid. "
-                            "Applies to exports too.")
+                    self._splits_view = dpg.add_checkbox(
+                        label="Splits", default_value=False, enabled=False,
+                        callback=self._on_splits_view_toggle)
                     with dpg.group(horizontal=True, tag="map_save_controls"):
                         self._cam_btn = dpg.add_image_button(
                             "camera_icon_texture", callback=self._on_save_map,
@@ -856,6 +844,61 @@ class SetupMixin:
                             style=0, radius=2.0, show=False,
                             color=self.theme.color("body"),
                             secondary_color=self.theme.color("muted"))
+            self._tooltip(
+                self._splits_view,
+                "Highlight places assigned to more than one district. "
+                "Requires a place column.")
+
+    def _build_map_style_row(self) -> None:
+        """Width and colour for each kind of line, and the fill's opacity.
+
+        Two rows under the map. A width of 0 hides that line; a colour swatch
+        opens a picker. Everything here applies to the screen and to PNG and
+        PDF exports, and is saved in .mosaic/, not in presets.
+        """
+        self._style_width: dict = {}
+        self._style_color: dict = {}
+        self._style_label: dict = {}
+        defaults = default_colors(self.theme.palette)
+
+        def line(kind: str, label: str, hint: str) -> None:
+            self._style_label[kind] = self.theme.text(label, "muted")
+            self._style_width[kind] = dpg.add_input_float(
+                default_value=self._map_style.width(kind), min_value=0.0,
+                max_value=MAX_WIDTH, min_clamped=True, max_clamped=True,
+                step=0, format="%.1f", width=48, on_enter=False,
+                callback=self._on_map_style)
+            self._tooltip(self._style_width[kind],
+                          f"{hint} Width in pixels, 0 to 8. 0 hides the line.")
+            self._style_color[kind] = dpg.add_color_edit(
+                default_value=self._map_style.color(kind, defaults) + (255,),
+                no_inputs=True, no_label=True, no_alpha=True, no_tooltip=True,
+                callback=self._on_map_style_color, user_data=kind)
+
+        with dpg.group(tag="map_style_row"):
+            with dpg.group(horizontal=True):
+                self.theme.text("Map style", "subheading")
+                line("district", "District borders",
+                     "The lines between districts.")
+                line("place", line_label(self._place_unit),
+                     "The lines between places in the place column.")
+            with dpg.group(horizontal=True):
+                line("precinct", "Precinct lines",
+                     "The lines between precincts.")
+                self.theme.text("Fill opacity", "muted")
+                self._fill_opacity = dpg.add_slider_int(
+                    default_value=int(round(self._fill_opacity_value * 100)),
+                    min_value=0, max_value=100, format="%d%%",
+                    width=130, clamped=True, callback=self._on_fill_opacity)
+                self._tooltip(
+                    self._fill_opacity,
+                    "How solid the fill is: 45% by default over a basemap, "
+                    "100% without one. Lines and labels always stay solid.")
+                reset = dpg.add_button(label="Reset",
+                                       callback=self._on_map_style_reset)
+                dpg.bind_item_theme(reset, self.theme.antinudge_theme)
+                self._tooltip(reset, "Put widths, colours and opacity back "
+                                     "to their defaults.")
 
     def _build_map_canvas(self):
         if not self._map_native_input:
