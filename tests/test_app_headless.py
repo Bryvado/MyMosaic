@@ -619,3 +619,51 @@ def test_default_line_colours_follow_the_theme(app):
     finally:
         dpg.set_value(app._theme_radio, start)
         app._on_theme_change()
+
+
+def _ancestors(item):
+    while item:
+        yield dpg.get_alias_id(item) if isinstance(item, str) else item
+        item = dpg.get_item_parent(item)
+
+
+def test_the_reference_plan_loader_is_reachable_from_the_main_window(app):
+    """Since the redesign nothing opened the Plan Continuity settings, so its
+    "Load reference plan..." button was the only, unreachable, way in."""
+    _frames(app)
+    main = dpg.get_alias_id("main_window")
+    for btn, callback in ((app._ref_load_btn, app._on_load_alignment),
+                          (app._ref_clear_btn, app._on_clear_alignment)):
+        assert main in _ancestors(btn)
+        assert dpg.is_item_shown(btn) and dpg.get_item_state(btn)["visible"]
+        assert dpg.get_item_callback(btn) == callback
+    # It sits on the Reference plan line, under the plan's name.
+    assert dpg.get_item_parent(dpg.get_item_parent(app._ref_load_btn)) == \
+        dpg.get_item_parent(app._alignment_info)
+
+    # Pressing it opens the picker (a map is loaded by the first test).
+    assert app.runner is not None and app.runner.gdf is not None
+    dpg.get_item_callback(app._ref_load_btn)()
+    _frames(app)
+    assert dpg.does_item_exist("__alignment_file_dialog")
+    assert dpg.is_item_shown("__alignment_file_dialog")
+    dpg.delete_item("__alignment_file_dialog")
+
+    # Clear puts the line back to "none" and leaves the score off.
+    dpg.get_item_callback(app._ref_clear_btn)()
+    assert dpg.get_value(app._alignment_info) == "none"
+    assert not dpg.get_value(app._alignment_enabled)
+
+
+def test_plan_continuity_row_opens_its_settings(app):
+    row = app._score_rows["alignment"]
+    if not row["open"]:
+        app._on_score_row_click("alignment")
+    _frames(app)
+    assert dpg.is_item_shown(row["settings"])
+    dpg.get_item_callback(row["settings"])()
+    _frames(app)
+    assert dpg.is_item_shown("popup_alignment_settings")
+    dpg.configure_item("popup_alignment_settings", show=False)
+    app._on_score_row_click("alignment")
+    _frames(app)
