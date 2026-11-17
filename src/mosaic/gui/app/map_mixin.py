@@ -15,7 +15,10 @@ from ._common import (
     _FILL_OPTIONS,
     _MAP_DH,
     _MAP_DW,
+    _MAP_MIN_H,
     _MAP_MIN_W,
+    _MAP_STYLE_FILE,
+    _SETTINGS_DIR,
     _build_camera_icon,
     dpg,
     log,
@@ -54,9 +57,10 @@ class MapMixin:
         # Current on-screen map size; the width follows the window (see
         # _sync_map_size), the height is fixed.
         self._map_w, self._map_h = _MAP_DW, _MAP_DH
-        self._map_target = _MAP_DW      # width the window currently asks for
+        # (width, height) the window currently asks the map to be.
+        self._map_target = (_MAP_DW, _MAP_DH)
         self._map_target_at = 0.0
-        self._map_resize_job = None     # (future, width, gdf, source, revision)
+        self._map_resize_job = None     # (future, (w, h), gdf, source, revision)
         self._map_resize_failure = None  # (request key, attempts, retry time)
         self._map_texture_tag = "map_texture"
         self._map_resize_registry = None
@@ -296,17 +300,22 @@ class MapMixin:
         self.state.update(status_message="Map resize failed; keeping the current map.")
 
     def _sync_map_size(self) -> None:
-        """Per frame: when the map area's width settles on a new value, redraw
-        the precinct grid at that width off the GUI thread, then swap it in.
-        The height stays fixed. Skipped during a batch (the map is frozen)."""
+        """Per frame: when the map box settles on a new size, redraw the
+        precinct grid at that size off the GUI thread, then swap it in.
+
+        Both dimensions follow the box. The raster is the box; MapView fits
+        the geography inside it at its own aspect ratio, so a square county in
+        a wide box is drawn as large as the height allows and centred. Skipped
+        during a batch (the map is frozen)."""
         if not dpg.does_item_exist("map_container"):
             return
-        rect_w = dpg.get_item_rect_size("map_container")[0]
-        if rect_w <= 0:
+        rect_w, rect_h = dpg.get_item_rect_size("map_container")
+        if rect_w <= 0 or rect_h <= 0:
             return
-        # Inner width of the bordered, padded map box (the app sets both).
+        # Inner size of the bordered, padded map box (the app sets both).
         sp = self.theme.palette.spacing
         inner = int(rect_w - 2 * sp.window_padding[0] - 2 * sp.child_border_size)
+        inner_h = int(rect_h - 2 * sp.window_padding[1] - 2 * sp.child_border_size)
         # Score and Entropy split the same width, whatever the map is doing.
         half = max(80, (inner - sp.item_spacing[0]) // 2)
         plot = "score_half_plot"
@@ -321,7 +330,7 @@ class MapMixin:
         cfg = dpg.get_item_configuration("map_center_pad")
         if cfg["show"] != show or (show and cfg["width"] != pad_w):
             dpg.configure_item("map_center_pad", show=show, width=max(1, pad_w))
-        target = max(_MAP_MIN_W, inner)
+        target = (max(_MAP_MIN_W, inner), max(_MAP_MIN_H, inner_h))
         now = time.monotonic()
         if target != self._map_target:
             self._map_target, self._map_target_at = target, now
@@ -343,11 +352,12 @@ class MapMixin:
                     self._install_map_size(width, raster)
                     self._map_resize_failure = None
                 except Exception:
-                    log.exception("Map resize failed at width %d", width)
+                    log.exception("Map resize failed at %s", width)
                     self._resize_failed(key, now)
         if self._ensemble_active:
             return
-        if (target == self._map_w or now - self._map_target_at < 0.25
+        if (target == (self._map_w, self._map_h)
+                or now - self._map_target_at < 0.25
                 or self._map_resize_job is not None or self._map_loading
                 or self._map_nav_future is not None):
             return
@@ -363,13 +373,13 @@ class MapMixin:
                 self._install_map_size(target, None)
                 self._map_resize_failure = None
             except Exception:
-                log.exception("Empty map resize failed at width %d", target)
+                log.exception("Empty map resize failed at %s", target)
                 self._resize_failed(key, now)
             return
         if not self._resize_source_ready(source, gdf):
             return
 
-        height, texture = self._map_h, source._ttag
+        texture = source._ttag
         view = self._map_viewport.bounds
         old_size = (source._w, source._h)
         inputs = dict(county_array=source._county_array,
@@ -382,8 +392,8 @@ class MapMixin:
                     or self._ensemble_active or not self._resize_source_ready(source, gdf))
 
         def rebuild():
-            raster = MapView(texture, target, height)
-            bounds = _resized_view_bounds(view, old_size, (target, height), gdf.total_bounds)
+            raster = MapView(texture, *target)
+            bounds = _resized_view_bounds(view, old_size, target, gdf.total_bounds)
             ok = raster.load(gdf, view_bounds=bounds, cancelled=obsolete, **inputs)
             return raster if ok else None
 
@@ -393,9 +403,9 @@ class MapMixin:
         self._map_resize_job = (self._map_nav_executor.submit(rebuild), target,
                                 gdf, source, revision)
 
-    def _install_map_size(self, width: int, raster) -> None:
+    def _install_map_size(self, size, raster) -> None:
         """Prepare a replacement texture before committing matching map geometry."""
-        h = self._map_h
+        width, h = size
         mv = self.map_view
         if raster is None:
             if mv is not None and mv._loaded:
@@ -418,19 +428,19 @@ class MapMixin:
                                     default_value=np.zeros(width * h * 4, dtype=np.float32),
                                     format=dpg.mvFormat_Float_rgba, tag=new_tag)
             dpg.configure_item("map_image", texture_tag=new_tag, **new_bounds)
-            dpg.configure_item("map_canvas", width=width)
+            dpg.configure_item("map_canvas", width=width, height=h)
         except Exception:
             dpg.configure_item("map_image", texture_tag=old_tag, **old_bounds)
-            dpg.configure_item("map_canvas", width=self._map_w)
+            dpg.configure_item("map_canvas", width=self._map_w,
+                               height=self._map_h)
             if dpg.does_item_exist(new_tag):
                 dpg.delete_item(new_tag)
             if registry is not None:
                 dpg.delete_item(registry)
             raise
         self._map_texture_tag = new_tag
-        self._map_w = width
-        log.info("Map resized to %d x %d px (map box %d px wide)", width, h,
-                 self._map_target)
+        self._map_w, self._map_h = width, h
+        log.info("Map resized to %d x %d px", width, h)
         if mv is not None:
             mv._ttag = new_tag
             mv._w, mv._h = width, h
@@ -633,6 +643,39 @@ class MapMixin:
         if self.map_view is None:
             return
         self.map_view.splits_view = dpg.get_value(self._splits_view)
+        self._rerender_map()
+
+    # ── Map style (.mosaic/map_style.json) ────────────────────────────────────
+    # How the map looks on this machine. Not in presets: a preset is a scoring
+    # recipe that travels between maps, and this is neither.
+
+    def _load_map_style(self) -> None:
+        import json
+        try:
+            data = json.loads(_MAP_STYLE_FILE.read_text(encoding="utf-8"))
+            value = float(data["fill_opacity"])
+            if 0.0 <= value <= 1.0:
+                self._fill_opacity_value = value
+        except Exception:
+            pass                        # missing or unreadable: keep 100%
+
+    def _save_map_style(self) -> None:
+        import json
+        try:
+            _SETTINGS_DIR.mkdir(parents=True, exist_ok=True)
+            _MAP_STYLE_FILE.write_text(
+                json.dumps({"fill_opacity": self._fill_opacity_value}, indent=2),
+                encoding="utf-8")
+        except Exception:
+            pass
+
+    def _on_fill_opacity(self):
+        """The toolbar slider: fade the fill, leave lines and labels solid."""
+        self._fill_opacity_value = dpg.get_value(self._fill_opacity) / 100.0
+        self._save_map_style()
+        if self.map_view is None:
+            return
+        self.map_view.fill_opacity = self._fill_opacity_value
         self._rerender_map()
 
     def _on_labels_toggle(self):

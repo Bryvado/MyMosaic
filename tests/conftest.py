@@ -28,7 +28,7 @@ def display():
         pytest.skip("needs a display: set DISPLAY or install Xvfb")
     number = 90 + os.getpid() % 400
     proc = subprocess.Popen(
-        [xvfb, f":{number}", "-screen", "0", "1600x1100x24", "-nolisten", "tcp"],
+        [xvfb, f":{number}", "-screen", "0", "1920x1200x24", "-nolisten", "tcp"],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     time.sleep(1.0)
     if proc.poll() is not None:
@@ -52,8 +52,9 @@ def app(display):
 
     application = MosaicApp()
     application.setup()
-    # Keep the tests out of the user's recent-files list.
+    # Keep the tests out of the user's recent files and saved settings.
     application._push_recent_shapefile = lambda *args, **kwargs: None
+    application._save_place_unit = lambda: None
     dpg.show_viewport()
     for _ in range(3):
         application.run_frame()

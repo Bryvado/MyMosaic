@@ -592,16 +592,16 @@ class IOMixin:
     def _update_start_mode_display(self) -> None:
         filename, locked = self.state.get("hot_start_filename", "hot_start_locked_districts")
         if self._fine_tune_active:
-            text = "Start: Current map"
+            text = "Current map"
             detail = "Advanced > Stop Fine-Tuning"
         elif filename:
-            text = "Start: Captured plan" if filename == "Current Map" else "Start: CSV plan"
+            text = "Captured plan" if filename == "Current Map" else "CSV plan"
             detail = "Advanced > Clear Starting Plan"
             if locked:
                 noun = "district" if len(locked) == 1 else "districts"
                 text += f" -- {len(locked)} {noun} locked"
         else:
-            text = "Start: Random partition"
+            text = "Random partition"
             detail = ""
         dpg.set_value(self._hot_start_info, text)
         if detail:

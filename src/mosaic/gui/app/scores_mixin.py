@@ -18,7 +18,6 @@ from ._common import (
     _SCORE_PANELS,
     _SCORE_ROWS,
     _SCORE_VAL_W,
-    _SCORES_W,
     dpg,
 )
 
@@ -65,9 +64,7 @@ class ScoresMixin:
         self._score_rows: dict[str, dict] = {}
         self._score_fields: dict[str, int | str] = {}
         self._scores_sig = None
-        with dpg.group(horizontal=True):
-            self.theme.text("Scores", "heading")
-            dpg.add_spacer(width=_SCORES_W - 150)
+        with self._heading_row("Scores"):
             self._scores_count = self.theme.text("0 of 20 on", "muted")
         self._preset_info = self.theme.text("Preset warning", "warning",
                                             show=False)
@@ -156,17 +153,21 @@ class ScoresMixin:
             with dpg.group(horizontal=True):
                 self.theme.text(names.get(attr, "Weight"), "subheading")
                 is_float = attr == "_w_pop_deviation"
-                common = dict(width=168, min_value=0, callback=self._on_score_edit)
+                # format="": the number field beside the slider shows the
+                # value, so the slider does not print it a second time.
+                common = dict(width=168, min_value=0, format="",
+                              callback=self._on_score_edit)
                 default = self._score_default(attr)
                 if is_float:
                     setattr(self, attr, dpg.add_slider_float(
                         default_value=float(default), max_value=100.0,
-                        format="%.1f", **common))
+                        **common))
                 else:
                     setattr(self, attr, dpg.add_slider_int(
                         default_value=int(default), max_value=100, **common))
                 field = (dpg.add_input_float if is_float else dpg.add_input_int)
                 row_field = field(width=62, step=0, default_value=0,
+                                  **({"format": "%.1f"} if is_float else {}),
                                   callback=self._on_score_field,
                                   user_data=attr)
                 self._score_fields[attr] = row_field
@@ -249,7 +250,7 @@ class ScoresMixin:
         and the tables' cell padding take about 50px that a guess from the
         column constant would spend on text that then clips.
         """
-        outer = dpg.get_item_rect_size("scores_scroll")[0] or _SCORES_W
+        outer = dpg.get_item_rect_size("scores_scroll")[0] or self._columns[2]
         fixed = 46 + _SCORE_NAME_W + _SCORE_VAL_W
         return int(outer - fixed - 36)
 

@@ -34,6 +34,8 @@ import numpy as np
 import shapely
 from PIL import Image, ImageDraw, ImageFont
 
+from mosaic.gui.layout import blend_fill
+
 log = logging.getLogger("mosaic")
 
 # District-label font: bundled Inter SemiBold; fall back to Arial then default.
@@ -371,6 +373,9 @@ class MapView:
         # 1 = native (on-screen); offscreen export sets this from the DPI scale.
         # Precinct overlay is intentionally not scaled — it stays a hairline hint.
         self.border_thickness: int = 1
+        # Alpha of the fill layer, 0-1. Lines and labels are drawn after the
+        # fill and are never faded. Set from the map toolbar; exports copy it.
+        self.fill_opacity: float = 1.0
 
     # ── Load (thread-safe, no DPG) ────────────────────────────────────────────
 
@@ -790,6 +795,12 @@ class MapView:
             clean, contained = county_split_masks(assignment, self._county_array, n_districts)
             lut[:n][clean[self._county_array]] = self._splits_dim
             lut[:n][contained[self._county_array]] = self._splits_light
+        # Fill opacity, applied to the per-precinct colours before they are
+        # expanded to pixels: every fill mode ends in this one table, so one
+        # blend covers them all, and everything drawn after it (borders,
+        # place and precinct lines, labels) stays fully opaque.
+        if self.fill_opacity < 1.0:
+            lut[:n, :3] = blend_fill(lut[:n, :3], self._bg_color, self.fill_opacity)
         rgba = self._colorise(lut)
 
         if self.splits_view and self._county_array is not None:
