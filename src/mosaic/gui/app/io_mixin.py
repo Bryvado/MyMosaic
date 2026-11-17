@@ -54,7 +54,13 @@ class IOMixin:
         with dpg.file_dialog(
             directory_selector=False,
             show=True,
-            modal=True,
+            # Not modal: in Dear PyGui 2.3 a modal window opened after a
+            # modal file dialog is dismissed on creation -- DPG clears its
+            # show flag and it never appears, with no error. The column
+            # pickers and the discard confirm this dialog leads to are
+            # modal, and those matter more than dimming the background
+            # behind a transient picker. See _pick_alignment_dpg.
+            modal=False,
             callback=self._on_shapefile_selected,
             cancel_callback=lambda *_: None,
             default_path=default_path,
@@ -336,7 +342,13 @@ class IOMixin:
         with dpg.file_dialog(
             directory_selector=False,
             show=True,
-            modal=True,
+            # Not modal: in Dear PyGui 2.3 a modal window opened after a
+            # modal file dialog is dismissed on creation -- DPG clears its
+            # show flag and it never appears, with no error. The column
+            # pickers and the discard confirm this dialog leads to are
+            # modal, and those matter more than dimming the background
+            # behind a transient picker. See _pick_alignment_dpg.
+            modal=False,
             callback=lambda s, d: self._show_hot_start_column_picker(
                 d.get("file_path_name", "") if isinstance(d, dict) else ""
             ),
@@ -661,13 +673,25 @@ class IOMixin:
     def _pick_alignment_dpg(self):
         if dpg.does_item_exist("__alignment_file_dialog"):
             dpg.delete_item("__alignment_file_dialog")
-        from mosaic.paths import mosaic_data_dir
+        from mosaic.paths import mosaic_data_dir, output_dir
+        # Start where the exports are: Save Assignments writes the assignment
+        # CSVs most likely to be picked here into output/.
+        out = output_dir()
+        default_path = str(out if out.is_dir() else mosaic_data_dir())
         with dpg.file_dialog(
-            directory_selector=False, show=True, modal=True,
+            directory_selector=False, show=True,
+            # Not modal: in Dear PyGui 2.3 a modal window opened after a modal
+            # file dialog is dismissed on creation -- DPG clears its show flag
+            # and it never appears, with no error anywhere. That silently broke
+            # this loader, whose next step (_show_alignment_column_picker) is a
+            # modal. Deferring to a later frame does not help; only breaking
+            # the modal-on-modal does. The column picker stays modal, since a
+            # required choice matters more than dimming behind this dialog.
+            modal=False,
             callback=lambda s, d: self._show_alignment_column_picker(
                 d.get("file_path_name", "") if isinstance(d, dict) else ""),
             cancel_callback=lambda *_: None,
-            default_path=str(mosaic_data_dir()),
+            default_path=default_path,
             width=700, height=450, tag="__alignment_file_dialog",
             label="Select Reference Plan CSV",
         ):
