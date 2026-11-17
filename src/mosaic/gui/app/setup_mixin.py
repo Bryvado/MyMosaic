@@ -112,6 +112,7 @@ class SetupMixin:
 
         self._load_recent_shapefiles()
         self._load_recent_presets()
+        self._load_place_unit()
 
         self._build_population_popup()
         self._build_seed_popup()
@@ -150,6 +151,7 @@ class SetupMixin:
         self._build_hinge_panel()
         self._build_district_info_panel()
         self._build_phase_panel()
+        self._build_goals_panel()
 
         # ── Main window ───────────────────────────────────────────────────────
         # The page may scroll on short displays. Map children block wheel
@@ -207,6 +209,13 @@ class SetupMixin:
                     )
 
                 with dpg.menu(label="Configuration"):
+                    self._panel_goals_item = dpg.add_menu_item(
+                        label="Goals...", check=True, default_value=False,
+                        callback=lambda: dpg.configure_item(
+                            "panel_goals",
+                            show=dpg.get_value(self._panel_goals_item)),
+                    )
+                    dpg.add_separator()
                     dpg.add_menu_item(
                         label="Population...",
                         callback=lambda: dpg.configure_item(
@@ -276,6 +285,14 @@ class SetupMixin:
                 # omits County-Edge Bias (not a score chart) and appends panels
                 # with no score row, such as Temperature and District Info.
                 with dpg.menu(label="Scores", tag="menu_scores"):
+                    # Off, the list below is filtered to scores that are on or
+                    # that an active goal drives; on, it is today's full list.
+                    self._svis_advanced = dpg.add_menu_item(
+                        label="Advanced: show all scores", check=True,
+                        default_value=False,
+                        callback=lambda: self._on_advanced_scores("menu"),
+                    )
+                    dpg.add_separator()
                     # ── Geography ──
                     self._svis_cuts = dpg.add_menu_item(
                         label="Cut Edges", check=True, default_value=False,
@@ -933,8 +950,14 @@ class SetupMixin:
             with dpg.group(tag="main_score_controls"), dpg.child_window(
                     width=-1, height=_SCORE_MIN_H, border=True, tag="score_panel"):
                 with dpg.group(horizontal=True):
-                    self.theme.text("Choose visible scores from the Scores menu", "muted")
+                    self.theme.text("Set priorities in Goals, or tune any score here",
+                                    "muted")
                     dpg.add_spacer(width=12)
+                    dpg.add_button(
+                        label="Goals >>",
+                        callback=lambda: self._show_panel(
+                            "panel_goals", self._panel_goals_item),
+                    )
                     dpg.add_button(
                         label="Score Contributors >>",
                         callback=lambda: self._show_panel(

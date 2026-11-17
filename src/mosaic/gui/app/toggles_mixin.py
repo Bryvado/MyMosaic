@@ -176,8 +176,17 @@ class TogglesMixin:
 
     def _set_score_row_vis(self, row_tag: str, show: bool,
                            chk_item: int, toggle_cb) -> None:
-        """Show/hide a score row; if hiding, force-disable the checkbox."""
+        """Show/hide a score row; if hiding, force-disable the checkbox.
+
+        A row revealed from here is also pinned, so the Goals filter leaves it
+        alone: asking for a score in the menu outranks it being off.
+        """
         dpg.configure_item(row_tag, show=show)
+        if show:
+            self._score_rows_pinned.add(row_tag)
+        else:
+            self._score_rows_pinned.discard(row_tag)
+        self._goal_row_sig = None
         if not show and dpg.get_value(chk_item):
             dpg.set_value(chk_item, False)
             toggle_cb()

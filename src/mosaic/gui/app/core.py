@@ -29,6 +29,7 @@ from .ensemble_mixin import EnsembleMixin
 from .ensemble_roster_mixin import EnsembleRosterMixin
 from .ensemble_views_mixin import EnsembleViewsMixin
 from .export_mixin import ExportMixin
+from .goals_mixin import GoalsMixin
 from .io_mixin import IOMixin
 from .map_mixin import MapMixin
 from .menu_mixin import MenuMixin
@@ -43,6 +44,7 @@ from .updates_mixin import UpdatesMixin
 # App mixins compose one class; order is irrelevant (no method names overlap).
 _APP_MIXINS = (
     SetupMixin,
+    GoalsMixin,
     PopupsMixin,
     PanelsMixin,
     PhaseMixin,
@@ -125,6 +127,26 @@ class MosaicApp(*INTERNAL_MIXINS, *_APP_MIXINS):
         self._limit_plots: int | str = ""   # DPG checkbox tag, set during setup
 
         self._contrib_bar_series: list = []
+        self._contrib_goal_series: list = []
+        self._contrib_sig = None            # last Score Contributors state drawn
+
+        # Goals (plain-language layer over the score weights). Goal strengths
+        # are derived from the score widgets, so nothing about a goal is stored
+        # here -- only the wording setting and the change signatures that keep
+        # the per-frame refresh from rewriting unchanged widgets.
+        self._place_unit = "counties"       # what the "county" column holds
+        self._goal_rows: dict = {}
+        self._goals_sig = None
+        self._goal_row_sig = None
+        self._goal_snap = None              # (preset, goal states) this frame
+        self._goal_snap_frame = -1
+        self._panel_goals_item = 0
+        self._svis_advanced: int | str = ""
+        # Score rows the user revealed from the Scores menu: the goal filter
+        # hides rows that are off and unclaimed, but never one asked for.
+        self._score_rows_pinned: set = set()
+        # section -> enabled-checkbox attribute, from MenuMixin._PRESET_SCORES.
+        self._goal_chk = {sec: chk for sec, chk, *_ in self._PRESET_SCORES}
 
         # Track what data the current shapefile has
         self._has_elections: bool = False
