@@ -42,9 +42,27 @@ if [ ! -d "$UV_PROJECT_ENVIRONMENT" ]; then
 fi
 echo ""
 
+# ---- Keep the desktop responsive on a small server --------------------------
+# The search is CPU-bound. Left alone, Numba takes every core and the window
+# competes with it for time, which over remote desktop reads as a frozen app.
+# Leave one core for the interface (never fewer than one worker), and run at a
+# slightly lower priority so the desktop session wins any tie. Both can be
+# overridden: set NUMBA_NUM_THREADS or MOSAIC_NICE before launching.
+if [ -z "${NUMBA_NUM_THREADS:-}" ]; then
+    cores=$(nproc 2>/dev/null || echo 2)
+    workers=$((cores - 1))
+    [ "$workers" -lt 1 ] && workers=1
+    export NUMBA_NUM_THREADS="$workers"
+fi
+niceness="${MOSAIC_NICE:-5}"
+
 # "|| ec=$?" stops set -e from aborting before the error message below.
 ec=0
-uv run python -m mosaic || ec=$?
+if command -v nice &>/dev/null; then
+    nice -n "$niceness" uv run python -m mosaic || ec=$?
+else
+    uv run python -m mosaic || ec=$?
+fi
 
 if [ $ec -ne 0 ]; then
     echo ""
