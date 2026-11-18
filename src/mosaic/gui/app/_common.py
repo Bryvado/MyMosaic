@@ -45,9 +45,6 @@ _APP_ICON = _ASSETS_DIR / "mosaic_logo.ico"
 _PDF_PRECINCT_OFF_ALPHA = 0.05   # faint precinct hairlines in PDF even when the overlay is off
 
 _PLOT_LIMIT   = 10_000   # max points rendered when limit-plots is on
-_COMPACT_AT   = 20_000   # compact local buffer when it exceeds this
-_COMPACT_KEEP = 10_000   # keep last N at full resolution after compaction
-_COMPACT_THIN = 50       # keep 1-in-N for old data (~200 pts per 10k iters)
 
 # Phase plot: a metric-vs-metric trajectory whose tail cools with age (hot head
 # -> dark blue). Histories append in lockstep, so any two are index-aligned.
@@ -184,104 +181,80 @@ def _build_camera_icon(fg_rgb: tuple[int, int, int]) -> np.ndarray:
 
 
 class _SeriesBuffer:
-    """Incremental, self-compacting local history for one plot series.
+    """The interface's copy of one RunHistory series, as float64 arrays.
 
-    The GUI copies only the *delta* since the last frame under the lock
-    (~IPS/fps items, not the full history), keeping lock hold time constant
-    regardless of total run length.  When the buffer exceeds _COMPACT_AT
-    entries, entries older than _COMPACT_KEEP that haven't been thinned yet
-    are thinned to 1-in-_COMPACT_THIN.  Already-thinned data is never
-    thinned again (_compact_end tracks the boundary).
+    The run keeps a bounded, decimating history (mosaic.history). Each frame
+    the interface asks it only for the points recorded since last time, copied
+    under the lock -- a handful, whatever the length of the run -- and appends
+    them here, so lock time stays constant. When the history rewrites itself
+    (it thins out, or Revert to best cuts it) its generation changes, and the
+    next feed replaces this copy with the whole, still bounded, series.
     """
 
-    __slots__ = ("xs", "ys", "read", "_compact_end", "_xa", "_ya", "_na")
+    __slots__ = ("_x", "_y", "n", "gen", "pos")
 
     def __init__(self):
-        self.xs: list = []   # iteration indices (survive thinning intact)
-        self.ys: list = []   # values
-        self.read: int = 0   # items consumed from SharedState list so far
-        self._compact_end: int = 0  # xs[:_compact_end] has already been thinned
-        # Lazy numpy mirror of xs/ys for render-time thinning (see arrays()):
-        # grown by the new tail only, dropped when the lists are rewritten.
-        self._xa = np.empty(0, dtype=np.float64)
-        self._ya = np.empty(0, dtype=np.float64)
-        self._na = 0         # mirror covers xs[:_na] / ys[:_na]
+        self._x = np.empty(0, dtype=np.float64)   # iteration indices
+        self._y = np.empty(0, dtype=np.float64)   # values
+        self.n = 0
+        self.gen = -1       # history generation this copy came from
+        self.pos = 0        # history points consumed
 
-    def add(self, new_ys: list, *, scale: float = 1.0) -> None:
-        """Append plain-value delta (already copied outside the lock)."""
-        if not new_ys:
-            return
-        base = self.read
-        n = len(new_ys)
-        self.xs.extend(range(base, base + n))
-        self.ys.extend(new_ys if scale == 1.0 else (v * scale for v in new_ys))
-        self.read += n
-        self._maybe_compact()
+    def __len__(self) -> int:
+        return self.n
 
-    def add_pairs(self, new_pairs: list, *, scale: float = 1.0) -> None:
-        """Append [iter, value] pairs (acceptance_rate_history format)."""
-        if not new_pairs:
-            return
-        self.read += len(new_pairs)
-        self.xs.extend(int(p[0]) for p in new_pairs)
-        self.ys.extend(p[1] * scale for p in new_pairs)
-        self._maybe_compact()
+    @property
+    def xs(self) -> np.ndarray:
+        return self._x[:self.n]
 
-    def _maybe_compact(self) -> None:
-        if len(self.ys) <= _COMPACT_AT:
+    @property
+    def ys(self) -> np.ndarray:
+        return self._y[:self.n]
+
+    def feed(self, update: tuple, *, fn=None, drop_nan: bool = False) -> None:
+        """Take what RunHistory.delta returned: (generation, position,
+        iterations, values). `fn` maps values to display units."""
+        gen, pos, xs, ys = update
+        if gen != self.gen:
+            self.clear()            # the history was rewritten: start over
+        self.gen, self.pos = gen, pos
+        if not len(ys):
             return
-        cut = len(self.ys) - _COMPACT_KEEP
-        if cut <= self._compact_end:
-            return  # nothing new to thin
-        thin_xs = self.xs[self._compact_end:cut:_COMPACT_THIN]
-        thin_ys = self.ys[self._compact_end:cut:_COMPACT_THIN]
-        self.xs = self.xs[:self._compact_end] + thin_xs + self.xs[cut:]
-        self.ys = self.ys[:self._compact_end] + thin_ys + self.ys[cut:]
-        self._compact_end += len(thin_xs)
-        self._na = 0         # lists rewritten: rebuild the mirror on next use
+        if fn is not None:
+            ys = fn(ys)
+        if drop_nan:
+            keep = ~np.isnan(ys)
+            xs, ys = xs[keep], ys[keep]
+        k = len(ys)
+        if not k:
+            return
+        need = self.n + k
+        if need > len(self._y):
+            size = max(need, 2 * len(self._y), 1024)
+            x, y = np.empty(size, dtype=np.float64), np.empty(size, dtype=np.float64)
+            x[:self.n], y[:self.n] = self._x[:self.n], self._y[:self.n]
+            self._x, self._y = x, y
+        self._x[self.n:need] = xs
+        self._y[self.n:need] = ys
+        self.n = need
 
     def arrays(self) -> tuple:
-        """Return cached float64 arrays, converting only the appended tail.
-
-        Compaction invalidates the mirror; capacity grows geometrically.
-        Rendering still scans the visible window for extrema and sampling.
-        """
-        n = len(self.ys)
-        if self._na > n:
-            self._na = 0
-        if self._na < n:
-            need = max(n, 2 * len(self._ya)) if n > len(self._ya) else len(self._ya)
-            if need > len(self._ya):
-                xa = np.empty(need, dtype=np.float64)
-                ya = np.empty(need, dtype=np.float64)
-                xa[:self._na], ya[:self._na] = self._xa[:self._na], self._ya[:self._na]
-                self._xa, self._ya = xa, ya
-            self._xa[self._na:n] = self.xs[self._na:n]
-            self._ya[self._na:n] = self.ys[self._na:n]
-            self._na = n
-        return self._xa[:n], self._ya[:n]
+        """The recorded points as float64 arrays (views, not copies)."""
+        return self._x[:self.n], self._y[:self.n]
 
     def plot_data(self, limit: bool) -> tuple:
-        if limit and len(self.ys) > _PLOT_LIMIT:
-            return self.xs[-_PLOT_LIMIT:], self.ys[-_PLOT_LIMIT:]
-        return self.xs, self.ys
-
-    def trim_to(self, max_iter: int, new_read: int) -> None:
-        """Drop everything past max_iter; update read pointer (Revert to Best)."""
-        import bisect
-        idx = bisect.bisect_right(self.xs, max_iter)
-        del self.xs[idx:]
-        del self.ys[idx:]
-        self.read = min(self.read, new_read)
-        self._compact_end = min(self._compact_end, len(self.xs))
-        self._na = min(self._na, len(self.xs))
+        """The points to draw as lists: the newest `_PLOT_LIMIT` when limited."""
+        if limit and self.n > _PLOT_LIMIT:
+            return (self._x[self.n - _PLOT_LIMIT:self.n].tolist(),
+                    self._y[self.n - _PLOT_LIMIT:self.n].tolist())
+        return self._x[:self.n].tolist(), self._y[:self.n].tolist()
 
     def clear(self) -> None:
-        self.xs.clear()
-        self.ys.clear()
-        self.read = 0
-        self._compact_end = 0
-        self._na = 0
+        """Forget everything, including the position: the next feed reads the
+        history from its start."""
+        self.n = 0
+        self.gen = -1
+        self.pos = 0
 
 
 # Score Contributor panel — bar chart metrics in display order (structural → partisan)
@@ -686,9 +659,6 @@ __all__ = [
     "AnnealingConfig",
     "__version__",
     "_PLOT_LIMIT",
-    "_COMPACT_AT",
-    "_COMPACT_KEEP",
-    "_COMPACT_THIN",
     "_PHASE_BANDS",
     "_PHASE_HEAD",
     "_PHASE_BUDGET",

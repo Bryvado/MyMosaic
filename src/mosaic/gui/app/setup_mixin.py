@@ -707,7 +707,7 @@ class SetupMixin:
     def _build_run_details_popup(self) -> None:
         """The readouts a person checks rather than watches."""
         with self._dialog(
-            "Run details", "popup_run_details", (360, 220), show=False,
+            "Run details", "popup_run_details", (360, 260), show=False,
             primary=("Close", lambda: dpg.configure_item(
                 "popup_run_details", show=False)),
         ):
@@ -717,6 +717,11 @@ class SetupMixin:
             self._acc_txt = dpg.add_text("Entropy: --")
             self._succ_txt = dpg.add_text("Accepted steps: --")
             self._flip_txt = dpg.add_text("Flip rate: 0.0%")
+            dpg.add_separator()
+            # Chart history is bounded (mosaic.history), so this should level
+            # off however long the run is.
+            self._mem_txt = dpg.add_text("Memory: --", wrap=330)
+            self._mem_at = 0.0
 
     # ── Centre column pieces ──────────────────────────────────────────────────
 
