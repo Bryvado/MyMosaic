@@ -7,6 +7,7 @@ from typing import Optional
 
 import numpy as np
 
+from mosaic.history import RunHistory
 from mosaic.recom.annealing import AnnealingConfig
 from mosaic.scoring.score import ScoreConfig
 
@@ -76,52 +77,15 @@ class SharedState:
     best_iteration: int = 0
     best_cut_edges: int = 0
     best_temperature: float = 0.0
-    # History lengths at the moment best was recorded (for Revert to Best trimming)
-    best_score_history_len: int = 0
-    best_temp_history_len: int = 0
-    best_acc_history_len: int = 0
 
     # Annealing runtime
     current_temperature: float = 0.0
     accepted_worse: int = 0
     rejected_worse: int = 0
 
-    # Plot histories
-    score_history: list = field(default_factory=list)
-    temperature_history: list = field(default_factory=list)
-    # Each entry: [iteration_float, rolling_acceptance_rate_float]
-    acceptance_rate_history: list = field(default_factory=list)
-    # Per-metric histories (one entry per iteration, same length as score_history)
-    county_splits_score_history: list = field(default_factory=list)
-    county_excess_splits_history: list = field(default_factory=list)
-    county_unified_districts_history: list = field(default_factory=list)
-    mm_history: list = field(default_factory=list)
-    eg_history: list = field(default_factory=list)
-    partisan_bias_history: list = field(default_factory=list)
-    partisan_gini_history: list = field(default_factory=list)
-    dem_seats_history: list = field(default_factory=list)
-    pp_history: list = field(default_factory=list)
-    reock_history: list = field(default_factory=list)
-    holistic_compactness_history: list = field(default_factory=list)
-    holistic_splitting_history: list = field(default_factory=list)
-    holistic_proportionality_history: list = field(default_factory=list)
-    holistic_competitiveness_history: list = field(default_factory=list)
-    representation_black_history: list = field(default_factory=list)
-    representation_latino_history: list = field(default_factory=list)
-    representation_asian_history: list = field(default_factory=list)
-    representation_black_seats_history: list = field(default_factory=list)
-    representation_latino_seats_history: list = field(default_factory=list)
-    representation_asian_seats_history: list = field(default_factory=list)
-    cohesion_black_history: list = field(default_factory=list)
-    cohesion_latino_history: list = field(default_factory=list)
-    cohesion_asian_history: list = field(default_factory=list)
-    congruence_black_history: list = field(default_factory=list)
-    congruence_latino_history: list = field(default_factory=list)
-    congruence_asian_history: list = field(default_factory=list)
-    # Aggregate penalties actually minimized in annealing (the "Overall" charts).
-    representation_overall_history: list = field(default_factory=list)
-    minority_cohesion_overall_history: list = field(default_factory=list)
-    community_congruence_overall_history: list = field(default_factory=list)
+    # Plot histories: bounded and decimating (see mosaic.history). Replaces the
+    # ~45 per-iteration lists, which grew without limit.
+    history: RunHistory = field(default_factory=RunHistory)
     # Run-constant opportunity targets ({group: {target, feasible, ceiling}}),
     # published once at run start. Display only; never updated per iteration.
     opportunity_targets: dict = field(default_factory=dict)
@@ -134,17 +98,6 @@ class SharedState:
     # applicable group, no adjacency mass, no cores), so a missing entry must
     # read as "not applicable" rather than as a top score. Set at run start.
     race_score_applicable: dict = field(default_factory=dict)
-    pop_deviation_history: list = field(default_factory=list)
-    pop_dev_max_history: list = field(default_factory=list)
-    pop_dev_mean_history: list = field(default_factory=list)
-    alignment_penalty_history: list = field(default_factory=list)
-    alignment_mean_ret_history: list = field(default_factory=list)
-    alignment_min_ret_history: list = field(default_factory=list)
-    cut_edges_history: list = field(default_factory=list)
-    majority_dem_history: list = field(default_factory=list)
-    majority_rep_history: list = field(default_factory=list)
-    hinge_history: list = field(default_factory=list)
-    inversion_history: list = field(default_factory=list)
 
     # Score breakdown: metric name → % of total weighted score (updated by runner)
     score_breakdown: dict = field(default_factory=dict)
@@ -245,58 +198,13 @@ class SharedState:
             self.best_assignment = None
             self.best_cut_edges = 0
             self.best_temperature = 0.0
-            self.best_score_history_len = 0
-            self.best_temp_history_len = 0
-            self.best_acc_history_len = 0
             self.current_assignment = None
             self.current_temperature = 0.0
             self.accepted_worse = 0
             self.rejected_worse = 0
-            self.score_history = []
-            self.temperature_history = []
-            self.acceptance_rate_history = []
-            self.county_splits_score_history = []
-            self.county_excess_splits_history = []
-            self.county_unified_districts_history = []
-            self.mm_history = []
-            self.eg_history = []
-            self.partisan_bias_history = []
-            self.partisan_gini_history = []
-            self.dem_seats_history = []
-            self.pp_history = []
-            self.reock_history = []
-            self.holistic_compactness_history = []
-            self.holistic_splitting_history = []
-            self.holistic_proportionality_history = []
-            self.holistic_competitiveness_history = []
-            self.representation_black_history = []
-            self.representation_latino_history = []
-            self.representation_asian_history = []
-            self.representation_black_seats_history = []
-            self.representation_latino_seats_history = []
-            self.representation_asian_seats_history = []
-            self.cohesion_black_history = []
-            self.cohesion_latino_history = []
-            self.cohesion_asian_history = []
-            self.congruence_black_history = []
-            self.congruence_latino_history = []
-            self.congruence_asian_history = []
-            self.representation_overall_history = []
-            self.minority_cohesion_overall_history = []
-            self.community_congruence_overall_history = []
+            self.history.reset()
             self.opportunity_targets = {}
             self.race_score_applicable = {}
-            self.pop_deviation_history = []
-            self.pop_dev_max_history = []
-            self.pop_dev_mean_history = []
-            self.alignment_penalty_history = []
-            self.alignment_mean_ret_history = []
-            self.alignment_min_ret_history = []
-            self.cut_edges_history = []
-            self.majority_dem_history = []
-            self.majority_rep_history = []
-            self.hinge_history = []
-            self.inversion_history = []
             self.score_breakdown = {}
             self.best_score_breakdown = {}
             self.initial_assignment = None

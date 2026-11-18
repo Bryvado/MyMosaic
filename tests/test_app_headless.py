@@ -667,3 +667,42 @@ def test_plan_continuity_row_opens_its_settings(app):
     dpg.configure_item("popup_alignment_settings", show=False)
     app._on_score_row_click("alignment")
     _frames(app)
+
+
+def test_a_run_records_only_what_is_on_or_open_and_revert_still_works(app):
+    from mosaic import history as H
+    _resize(app, 1440, 900)
+    app._set_visual("comet", True)
+    dpg.set_value(app._panel_mm_item, True)
+    app._on_panel_mm_toggle()
+    _frames(app, 8)
+    assert {"mm_history", "eg_history"} <= app.state.history.extra
+    dpg.set_value(app._iterations, 300)
+    app._on_run()
+    assert _pump(app, lambda: app.state.get("status")[0]
+                 == AlgorithmStatus.COMPLETED, timeout=120)
+    _frames(app, 5)
+    hist = app.state.history
+    names = set(hist.names())
+    assert {H.SCORE, H.TEMPERATURE, H.CUT_EDGES, "mm_history"} <= names
+    assert "hinge_history" not in names and "mm_history" in names
+    assert hist.span()[0] == 0 and hist.span()[1] == 300
+    # The charts' copies hold what the run recorded, on an iteration axis.
+    assert len(app._buf_score) == hist.n and app._buf_score.xs[-1] == 300
+    assert len(app._buf_mm) > 0
+
+    best = app.state.best_iteration
+    app._on_revert_to_best()
+    _frames(app, 5)
+    assert hist.span()[1] <= best
+    assert len(app._buf_score) == hist.n and app._buf_score.xs[-1] <= best
+
+    # Run details shows this process's memory.
+    dpg.configure_item("popup_run_details", show=True)
+    _frames(app, 3)
+    assert dpg.get_value(app._mem_txt).startswith("Memory: ")
+    dpg.configure_item("popup_run_details", show=False)
+    dpg.set_value(app._panel_mm_item, False)
+    app._on_panel_mm_toggle()
+    app._set_visual("comet", False)
+    _reset_visuals(app)

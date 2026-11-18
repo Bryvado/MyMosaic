@@ -74,14 +74,6 @@ _RATCHET_FLOOR = 0.0025        # 0.25%
 _RATCHET_RAMP_START = 0.33     # ramp begins at the 33% mark
 
 
-def _gated(weight: float, value: float) -> float:
-    """Display value for a weight-gated score: the value when weighted, else NaN.
-    score_plan skips these metrics' computation when unweighted, so their raw
-    field is a meaningless 0; NaN makes the panel show a gap instead of a false
-    zero (ImPlot skips NaN points)."""
-    return value if weight else float("nan")
-
-
 def ratchet_ceiling(progress: float, start_tol: float, floor: float) -> float:
     """Scheduled population-tolerance ceiling at a given run progress [0, 1].
 
@@ -808,61 +800,6 @@ class AlgorithmRunner:
             current_ps = score_plan(cut_edge_indices, score_config,
                                     assignment=assignment, **_skw)
 
-            with self.state._lock:
-                self.state.score_history.append(current_ps.total)
-                self.state.county_splits_score_history.append(
-                    current_ps.county_excess_score + current_ps.county_unified_score)
-                self.state.county_excess_splits_history.append(current_ps.county_excess_splits)
-                self.state.county_unified_districts_history.append(current_ps.county_unified_districts)
-                self.state.mm_history.append(current_ps.mean_median)
-                self.state.eg_history.append(current_ps.efficiency_gap)
-                self.state.partisan_bias_history.append(current_ps.partisan_bias)
-                self.state.partisan_gini_history.append(
-                    _gated(score_config.weight_partisan_gini, current_ps.partisan_gini))
-                self.state.dem_seats_history.append(current_ps.dem_seats)
-                self.state.pp_history.append(1.0 - current_ps.polsby_popper / 100.0)
-                self.state.reock_history.append(1.0 - current_ps.reock / 100.0)
-                self.state.holistic_compactness_history.append(current_ps.holistic_compactness)
-                self.state.holistic_splitting_history.append(current_ps.holistic_splitting)
-                self.state.holistic_proportionality_history.append(
-                    _gated(score_config.weight_holistic_proportionality,
-                           current_ps.holistic_proportionality))
-                self.state.holistic_competitiveness_history.append(
-                    _gated(score_config.weight_holistic_competitiveness,
-                           current_ps.holistic_competitiveness))
-                self.state.pop_deviation_history.append(current_ps.pop_deviation)
-                self.state.pop_dev_max_history.append(current_ps.pop_dev_max)
-                self.state.pop_dev_mean_history.append(current_ps.pop_dev_mean)
-                self.state.alignment_penalty_history.append(current_ps.alignment)
-                self.state.alignment_mean_ret_history.append(current_ps.alignment_mean_ret)
-                self.state.alignment_min_ret_history.append(current_ps.alignment_min_ret)
-                self.state.representation_black_history.append(current_ps.representation_black)
-                self.state.representation_latino_history.append(current_ps.representation_latino)
-                self.state.representation_asian_history.append(current_ps.representation_asian)
-                self.state.representation_black_seats_history.append(current_ps.opportunity_black)
-                self.state.representation_latino_seats_history.append(current_ps.opportunity_latino)
-                self.state.representation_asian_seats_history.append(current_ps.opportunity_asian)
-                self.state.cohesion_black_history.append(current_ps.cohesion_black)
-                self.state.cohesion_latino_history.append(current_ps.cohesion_latino)
-                self.state.cohesion_asian_history.append(current_ps.cohesion_asian)
-                self.state.congruence_black_history.append(current_ps.congruence_black)
-                self.state.congruence_latino_history.append(current_ps.congruence_latino)
-                self.state.congruence_asian_history.append(current_ps.congruence_asian)
-                self.state.representation_overall_history.append(current_ps.representation)
-                self.state.minority_cohesion_overall_history.append(current_ps.minority_cohesion)
-                self.state.community_congruence_overall_history.append(
-                    current_ps.community_congruence)
-                self.state.cut_edges_history.append(current_ps.cut_edges)
-                self.state.majority_dem_history.append(
-                    _gated(score_config.weight_majority_chance_dem, current_ps.majority_chance_dem))
-                self.state.majority_rep_history.append(
-                    _gated(score_config.weight_majority_chance_rep, current_ps.majority_chance_rep))
-                self.state.hinge_history.append(
-                    _gated(score_config.weight_hinge, current_ps.hinge_chance))
-                self.state.inversion_history.append(
-                    _gated(score_config.weight_holistic_proportionality,
-                           current_ps.inversion_chance))
-
             self.state.update(
                 status=AlgorithmStatus.RUNNING,
                 status_message="Running ReCom...",
@@ -874,9 +811,6 @@ class AlgorithmRunner:
                 best_iteration=0,
                 best_cut_edges=current_ps.cut_edges,
                 best_temperature=0.0,
-                best_score_history_len=1,
-                best_temp_history_len=0,
-                best_acc_history_len=0,
                 score_breakdown=_build_score_breakdown(current_ps, score_config),
                 best_score_breakdown=_build_score_breakdown(current_ps, score_config),
             )
@@ -890,11 +824,17 @@ class AlgorithmRunner:
                     f"cooling_rate={ann.cooling_rate:.6f}"
                 )
                 self.state.update(current_temperature=ann.temperature)
-                with self.state._lock:
-                    self.state.temperature_history.append(ann.temperature)
             else:
                 ann = None
                 log.info("Annealing disabled")
+
+            # ── History ──────────────────────────────────────────────────────
+            # Bounded and decimating: which series are kept depends on which
+            # scores are on, and the first point is the starting plan.
+            with self.state._lock:
+                self.state.history.begin_run(score_config)
+                self.state.history.tick(
+                    0, current_ps, ann.temperature if ann is not None else None)
 
             # ── Main loop ────────────────────────────────────────────────────
             self.state.update(start_time=time.time())
@@ -902,6 +842,13 @@ class AlgorithmRunner:
 
             _last_map_time = 0.0
             _launch_watch_fired = False
+
+            def _accept_rate():
+                """Share of recent worse moves accepted; None until there are
+                enough to mean something. Only asked for at recorded points."""
+                if len(worse_window) < 10:
+                    return None
+                return sum(worse_window) / len(worse_window)
 
             for iteration in range(1, max_iterations + 1):
                 # Launch Watch: re-anchor temperature after the first N iters
@@ -1035,79 +982,21 @@ class AlgorithmRunner:
                     self.state.update(current_iteration=iteration,
                                       current_flip_rate=_flip_p)
 
-                n_score = n_temp = n_acc = 0
                 with self.state._lock:
                     # The display interval is live-editable. Read it under the
                     # existing lock, rather than retaining the run-start value.
                     map_render_interval = self.state.map_render_interval
-                    self.state.score_history.append(current_ps.total)
-                    self.state.county_splits_score_history.append(
-                        current_ps.county_excess_score + current_ps.county_unified_score)
-                    self.state.county_excess_splits_history.append(current_ps.county_excess_splits)
-                    self.state.county_unified_districts_history.append(current_ps.county_unified_districts)
-                    self.state.mm_history.append(current_ps.mean_median)
-                    self.state.eg_history.append(current_ps.efficiency_gap)
-                    self.state.partisan_bias_history.append(current_ps.partisan_bias)
-                    self.state.partisan_gini_history.append(
-                        _gated(score_config.weight_partisan_gini, current_ps.partisan_gini))
-                    self.state.dem_seats_history.append(current_ps.dem_seats)
-                    self.state.pp_history.append(1.0 - current_ps.polsby_popper / 100.0)
-                    self.state.reock_history.append(1.0 - current_ps.reock / 100.0)
-                    self.state.holistic_compactness_history.append(current_ps.holistic_compactness)
-                    self.state.holistic_splitting_history.append(current_ps.holistic_splitting)
-                    self.state.holistic_proportionality_history.append(
-                        _gated(score_config.weight_holistic_proportionality,
-                               current_ps.holistic_proportionality))
-                    self.state.holistic_competitiveness_history.append(
-                        _gated(score_config.weight_holistic_competitiveness,
-                               current_ps.holistic_competitiveness))
-                    self.state.pop_deviation_history.append(current_ps.pop_deviation)
-                    self.state.pop_dev_max_history.append(current_ps.pop_dev_max)
-                    self.state.pop_dev_mean_history.append(current_ps.pop_dev_mean)
-                    self.state.alignment_penalty_history.append(current_ps.alignment)
-                    self.state.alignment_mean_ret_history.append(current_ps.alignment_mean_ret)
-                    self.state.alignment_min_ret_history.append(current_ps.alignment_min_ret)
-                    self.state.representation_black_history.append(current_ps.representation_black)
-                    self.state.representation_latino_history.append(current_ps.representation_latino)
-                    self.state.representation_asian_history.append(current_ps.representation_asian)
-                    self.state.representation_black_seats_history.append(current_ps.opportunity_black)
-                    self.state.representation_latino_seats_history.append(current_ps.opportunity_latino)
-                    self.state.representation_asian_seats_history.append(current_ps.opportunity_asian)
-                    self.state.cohesion_black_history.append(current_ps.cohesion_black)
-                    self.state.cohesion_latino_history.append(current_ps.cohesion_latino)
-                    self.state.cohesion_asian_history.append(current_ps.cohesion_asian)
-                    self.state.congruence_black_history.append(current_ps.congruence_black)
-                    self.state.congruence_latino_history.append(current_ps.congruence_latino)
-                    self.state.congruence_asian_history.append(current_ps.congruence_asian)
-                    self.state.representation_overall_history.append(current_ps.representation)
-                    self.state.minority_cohesion_overall_history.append(current_ps.minority_cohesion)
-                    self.state.community_congruence_overall_history.append(
-                        current_ps.community_congruence)
-                    self.state.cut_edges_history.append(current_ps.cut_edges)
-                    self.state.majority_dem_history.append(
-                        _gated(score_config.weight_majority_chance_dem,
-                               current_ps.majority_chance_dem))
-                    self.state.majority_rep_history.append(
-                        _gated(score_config.weight_majority_chance_rep,
-                               current_ps.majority_chance_rep))
-                    self.state.hinge_history.append(
-                        _gated(score_config.weight_hinge, current_ps.hinge_chance))
-                    self.state.inversion_history.append(
-                        _gated(score_config.weight_holistic_proportionality,
-                               current_ps.inversion_chance))
-                    n_score = len(self.state.score_history)
+
+                    # One point per `stride` iterations (see mosaic.history);
+                    # in between this only notes the newest iteration.
+                    self.state.history.tick(
+                        iteration, current_ps,
+                        ann.temperature if ann is not None else None,
+                        _accept_rate)
                     if ann is not None:
-                        self.state.temperature_history.append(ann.temperature)
-                        n_temp = len(self.state.temperature_history)
                         self.state.current_temperature = ann.temperature
                         self.state.accepted_worse = ann.accepted_worse
                         self.state.rejected_worse = ann.rejected_worse
-                        if len(worse_window) >= 10:
-                            rate = sum(worse_window) / len(worse_window)
-                            self.state.acceptance_rate_history.append(
-                                [float(iteration), rate]
-                            )
-                            n_acc = len(self.state.acceptance_rate_history)
 
                 # ── Best plan tracking
                 if accepted and current_ps.total < self.state.best_score:
@@ -1117,9 +1006,6 @@ class AlgorithmRunner:
                         best_iteration=iteration,
                         best_cut_edges=current_ps.cut_edges,
                         best_temperature=ann.temperature if ann else 0.0,
-                        best_score_history_len=n_score,
-                        best_temp_history_len=n_temp,
-                        best_acc_history_len=n_acc,
                         best_score_breakdown=_build_score_breakdown(current_ps, score_config),
                     )
                     # Standard ratchet: only new-best plans are eligible.

@@ -238,7 +238,8 @@ class MosaicApp(*INTERNAL_MIXINS, *_APP_MIXINS):
         self._phase_fade = True            # alpha fade with age vs solid trail
         self._phase_metric_sig = None      # last active-metric set the combos synced to
         self._phase_lim = None             # sticky (xlo,xhi,ylo,yhi) for "Fit all"
-        self._phase_prev_n = 0             # detect a run reset (history shrank)
+        self._history_need: frozenset = frozenset()   # published to the run
+        self._phase_prev_n = 0             # last iteration charted; a drop means a run reset
 
     # ── Setup ─────────────────────────────────────────────────────────────────
 

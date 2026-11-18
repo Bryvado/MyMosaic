@@ -295,42 +295,45 @@ class PhaseMixin:
         dpg.configure_item("phase_note", show=False)
         dpg.configure_item("phase_plot", show=True)
         xa, ya = _PHASE_ATTR[self._phase_x_label], _PHASE_ATTR[self._phase_y_label]
+        # The history is bounded and thins itself as a run grows, so points are
+        # spaced by iterations, not by position. Both series share the
+        # iteration axis, and the newest iteration is always the last point.
         with self.state._lock:
-            xh = getattr(self.state, xa)
-            yh = getattr(self.state, ya)
-            n = min(len(xh), len(yh))
-            if n == 0:
-                xs_l = ys_l = []
-                head_len = tail_n = stride = 0
-            else:
-                head_len = min(n, _PHASE_HEAD)
-                tail_n = n - head_len
-                budget_tail = max(1, _PHASE_BUDGET - head_len)
-                # Power-of-two stride: it only ever doubles, so the sampled tail
-                # indices stay nested -- points thin out, never reshuffle (no shimmer).
-                stride = 1
-                while tail_n // stride > budget_tail:
-                    stride *= 2
-                xs_l = (xh[0:tail_n:stride] if tail_n else []) + xh[tail_n:n]
-                ys_l = (yh[0:tail_n:stride] if tail_n else []) + yh[tail_n:n]
-        if n < self._phase_prev_n:          # run reset -> forget sticky bounds
+            iters, cols = self.state.history.columns((xa, ya), with_tail=True)
+        xh, yh = cols[xa], cols[ya]
+        ok = ~(np.isnan(xh) | np.isnan(yh))     # before a chart's series began
+        if not ok.all():
+            iters, xh, yh = iters[ok], xh[ok], yh[ok]
+        n = len(xh)
+        if n == 0:
+            sel = np.empty(0, dtype=np.intp)
+            head_len = tail_n = stride = 0
+        else:
+            head_len = min(n, _PHASE_HEAD)
+            tail_n = n - head_len
+            budget_tail = max(1, _PHASE_BUDGET - head_len)
+            # Power-of-two stride: it only ever doubles, so the sampled tail
+            # indices stay nested -- points thin out, never reshuffle (no shimmer).
+            stride = 1
+            while tail_n // stride > budget_tail:
+                stride *= 2
+            sel = np.concatenate([np.arange(0, tail_n, stride),
+                                  np.arange(tail_n, n)]).astype(np.intp)
+        last_iter = int(iters[-1]) if n else 0
+        if last_iter < self._phase_prev_n:  # run reset -> forget sticky bounds
             self._phase_lim = None
-        self._phase_prev_n = n
-        if not xs_l:
+        self._phase_prev_n = last_iter
+        if n == 0:
             for k in range(_PHASE_BANDS):
                 dpg.set_value(f"phase_band_{k}", [[], []])
             dpg.set_value("phase_head", [[], []])
             return
-        xs = _phase_transform(_PHASE_KIND[self._phase_x_label],
-                              np.asarray(xs_l, dtype=np.float64))
-        ys = _phase_transform(_PHASE_KIND[self._phase_y_label],
-                              np.asarray(ys_l, dtype=np.float64))
+        xs = _phase_transform(_PHASE_KIND[self._phase_x_label], xh[sel])
+        ys = _phase_transform(_PHASE_KIND[self._phase_y_label], yh[sel])
         hx, hy = float(xs[-1]), float(ys[-1])           # dot = true current plan
         # Age (iterations back from the head) per plotted point, oldest first, so
         # recency t = exp(-age/TAU) is ascending -> bands are contiguous by t.
-        tail_ages = ((n - 1) - np.arange(0, tail_n, stride)) if tail_n else np.empty(0)
-        head_ages = np.arange(head_len - 1, -1, -1)
-        ages = np.concatenate([tail_ages, head_ages]).astype(np.float64)
+        ages = (last_iter - iters[sel]).astype(np.float64)
         t = np.exp(-ages / _PHASE_TAU)
         if self._phase_smooth and len(xs) >= _PHASE_SMOOTH_WIN:
             # Edge-aware moving average: normalise by the real (non-padded) window

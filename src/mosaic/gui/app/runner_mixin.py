@@ -90,73 +90,14 @@ class RunnerMixin:
             best_cuts   = self.state.best_cut_edges
             best_temp   = self.state.best_temperature
             best_breakdown = dict(self.state.best_score_breakdown)
-            n_score     = self.state.best_score_history_len
-            n_temp      = self.state.best_temp_history_len
-            n_acc       = self.state.best_acc_history_len
             n_dist      = self.state.num_districts
             max_iter    = self.state.max_iterations
             _init       = (self.state.initial_assignment.copy()
                            if self.state.initial_assignment is not None else None)
-            self.state.score_history           = self.state.score_history[:n_score]
-            self.state.temperature_history     = self.state.temperature_history[:n_temp]
-            self.state.acceptance_rate_history = self.state.acceptance_rate_history[:n_acc]
-            self.state.county_splits_score_history = (
-                self.state.county_splits_score_history[:n_score])
-            self.state.county_excess_splits_history = (
-                self.state.county_excess_splits_history[:n_score])
-            self.state.county_unified_districts_history = (
-                self.state.county_unified_districts_history[:n_score])
-            self.state.mm_history               = self.state.mm_history[:n_score]
-            self.state.eg_history               = self.state.eg_history[:n_score]
-            self.state.partisan_bias_history    = self.state.partisan_bias_history[:n_score]
-            self.state.partisan_gini_history    = self.state.partisan_gini_history[:n_score]
-            self.state.dem_seats_history        = self.state.dem_seats_history[:n_score]
-            self.state.pp_history               = self.state.pp_history[:n_score]
-            self.state.reock_history            = self.state.reock_history[:n_score]
-            self.state.holistic_compactness_history = (
-                self.state.holistic_compactness_history[:n_score])
-            self.state.holistic_splitting_history = self.state.holistic_splitting_history[:n_score]
-            self.state.holistic_proportionality_history = (
-                self.state.holistic_proportionality_history[:n_score])
-            self.state.holistic_competitiveness_history = (
-                self.state.holistic_competitiveness_history[:n_score])
-            self.state.pop_deviation_history = self.state.pop_deviation_history[:n_score]
-            self.state.pop_dev_max_history   = self.state.pop_dev_max_history[:n_score]
-            self.state.pop_dev_mean_history  = self.state.pop_dev_mean_history[:n_score]
-            self.state.cut_edges_history        = self.state.cut_edges_history[:n_score]
-            # Lockstep with score_history; trim here too so the buffers below
-            # don't re-grow from the post-best tail on the next frame.
-            self.state.alignment_penalty_history = self.state.alignment_penalty_history[:n_score]
-            self.state.alignment_mean_ret_history = self.state.alignment_mean_ret_history[:n_score]
-            self.state.alignment_min_ret_history  = self.state.alignment_min_ret_history[:n_score]
-            self.state.majority_dem_history     = self.state.majority_dem_history[:n_score]
-            self.state.majority_rep_history     = self.state.majority_rep_history[:n_score]
-            self.state.hinge_history            = self.state.hinge_history[:n_score]
-            self.state.inversion_history        = self.state.inversion_history[:n_score]
-            self.state.representation_black_history = (
-                self.state.representation_black_history[:n_score])
-            self.state.representation_latino_history = (
-                self.state.representation_latino_history[:n_score])
-            self.state.representation_asian_history = (
-                self.state.representation_asian_history[:n_score])
-            self.state.representation_black_seats_history = (
-                self.state.representation_black_seats_history[:n_score])
-            self.state.representation_latino_seats_history = (
-                self.state.representation_latino_seats_history[:n_score])
-            self.state.representation_asian_seats_history = (
-                self.state.representation_asian_seats_history[:n_score])
-            self.state.cohesion_black_history  = self.state.cohesion_black_history[:n_score]
-            self.state.cohesion_latino_history = self.state.cohesion_latino_history[:n_score]
-            self.state.cohesion_asian_history  = self.state.cohesion_asian_history[:n_score]
-            self.state.representation_overall_history = (
-                self.state.representation_overall_history[:n_score])
-            self.state.minority_cohesion_overall_history = (
-                self.state.minority_cohesion_overall_history[:n_score])
-            self.state.congruence_black_history  = self.state.congruence_black_history[:n_score]
-            self.state.congruence_latino_history = self.state.congruence_latino_history[:n_score]
-            self.state.congruence_asian_history  = self.state.congruence_asian_history[:n_score]
-            self.state.community_congruence_overall_history = (
-                self.state.community_congruence_overall_history[:n_score])
+            # Every series ends at the best iteration, or at the last point
+            # recorded before it once the history has been thinned. Readers
+            # notice the change and reload; nothing to trim by hand.
+            self.state.history.truncate_after(best_iter)
 
         self.state.request_stop()
 
@@ -172,28 +113,6 @@ class RunnerMixin:
         )
         if max_iter > 0:
             self._update_run_tiles(best_iter / max_iter)
-
-        # Trim local history buffers to match the reverted-to state
-        for buf in (
-            self._buf_score, self._buf_cs_score, self._buf_cs_excess,
-            self._buf_cs_clean, self._buf_mm, self._buf_eg,
-            self._buf_pb, self._buf_pg,
-            self._buf_seats, self._buf_pp, self._buf_reock,
-            self._buf_hc, self._buf_hsplit, self._buf_hprop, self._buf_hcmp,
-            self._buf_popdev,
-            self._buf_popdev_max, self._buf_popdev_mean, self._buf_cuts,
-            self._buf_align_penalty, self._buf_align_mean, self._buf_align_min,
-            self._buf_maj_dem, self._buf_maj_rep, self._buf_hinge,
-            self._buf_inversion,
-            self._buf_rep_black, self._buf_rep_latino, self._buf_rep_asian,
-            self._buf_rep_black_seats, self._buf_rep_latino_seats, self._buf_rep_asian_seats,
-            self._buf_coh_black, self._buf_coh_latino, self._buf_coh_asian,
-            self._buf_cong_black, self._buf_cong_latino, self._buf_cong_asian,
-            self._buf_rep_overall, self._buf_coh_overall, self._buf_cong_overall,
-        ):
-            buf.trim_to(n_score - 1, n_score)
-        self._buf_temp.trim_to(n_temp - 1, n_temp)
-        self._buf_acc.trim_to(best_iter, n_acc)
 
         if self.map_view is not None and self.map_view._loaded:
             self.map_view.render_assignment(best_assign, n_dist, _init)
@@ -456,51 +375,9 @@ class RunnerMixin:
             return
         self.state.request_stop()
         with self.state._lock:
-            self.state.score_history = []
-            self.state.temperature_history = []
-            self.state.acceptance_rate_history = []
-            self.state.county_splits_score_history = []
-            self.state.county_excess_splits_history = []
-            self.state.county_unified_districts_history = []
-            self.state.mm_history = []
-            self.state.eg_history = []
-            self.state.partisan_bias_history = []
-            self.state.partisan_gini_history = []
-            self.state.dem_seats_history = []
-            self.state.pp_history = []
-            self.state.reock_history = []
-            self.state.holistic_compactness_history = []
-            self.state.holistic_splitting_history = []
-            self.state.holistic_proportionality_history = []
-            self.state.holistic_competitiveness_history = []
-            self.state.representation_black_history = []
-            self.state.representation_latino_history = []
-            self.state.representation_asian_history = []
-            self.state.representation_black_seats_history = []
-            self.state.representation_latino_seats_history = []
-            self.state.representation_asian_seats_history = []
-            self.state.cohesion_black_history = []
-            self.state.cohesion_latino_history = []
-            self.state.cohesion_asian_history = []
-            self.state.congruence_black_history = []
-            self.state.congruence_latino_history = []
-            self.state.congruence_asian_history = []
-            self.state.representation_overall_history = []
-            self.state.minority_cohesion_overall_history = []
-            self.state.community_congruence_overall_history = []
-            self.state.alignment_penalty_history = []
-            self.state.alignment_mean_ret_history = []
-            self.state.alignment_min_ret_history = []
+            self.state.history.reset()
             self.state.opportunity_targets = {}
             self.state.race_score_applicable = {}
-            self.state.inversion_history = []
-            self.state.pop_deviation_history = []
-            self.state.pop_dev_max_history = []
-            self.state.pop_dev_mean_history = []
-            self.state.cut_edges_history = []
-            self.state.majority_dem_history = []
-            self.state.majority_rep_history = []
-            self.state.hinge_history = []
         self.state.update(
             status=AlgorithmStatus.IDLE,
             status_message="",

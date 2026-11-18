@@ -988,45 +988,9 @@ class IOMixin:
         # Flush all history and series before the new load so charts start
         # fresh and the previous file's data doesn't bleed through.
         with self.state._lock:
-            self.state.score_history = []
-            self.state.temperature_history = []
-            self.state.acceptance_rate_history = []
-            self.state.county_splits_score_history = []
-            self.state.county_excess_splits_history = []
-            self.state.county_unified_districts_history = []
-            self.state.mm_history = []
-            self.state.eg_history = []
-            self.state.partisan_bias_history = []
-            self.state.partisan_gini_history = []
-            self.state.dem_seats_history = []
-            self.state.pp_history = []
-            self.state.reock_history = []
-            self.state.holistic_compactness_history = []
-            self.state.holistic_splitting_history = []
-            self.state.holistic_proportionality_history = []
-            self.state.holistic_competitiveness_history = []
-            self.state.representation_black_history = []
-            self.state.representation_latino_history = []
-            self.state.representation_asian_history = []
-            self.state.representation_black_seats_history = []
-            self.state.representation_latino_seats_history = []
-            self.state.representation_asian_seats_history = []
-            self.state.congruence_black_history = []
-            self.state.congruence_latino_history = []
-            self.state.congruence_asian_history = []
-            self.state.representation_overall_history = []
-            self.state.minority_cohesion_overall_history = []
-            self.state.community_congruence_overall_history = []
+            self.state.history.reset()
             self.state.opportunity_targets = {}
             self.state.race_score_applicable = {}
-            self.state.pop_deviation_history = []
-            self.state.pop_dev_max_history = []
-            self.state.pop_dev_mean_history = []
-            self.state.cut_edges_history = []
-            self.state.majority_dem_history = []
-            self.state.majority_rep_history = []
-            self.state.hinge_history = []
-            self.state.inversion_history = []
         self._clear_all_series()
         dpg.set_value(self._shp_info, "Building graph...")
         self.theme.retoken(self._shp_info, "muted")

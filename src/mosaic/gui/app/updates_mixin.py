@@ -1,7 +1,9 @@
 """Per-frame UI refresh: live plots, tables, and status labels."""
+from mosaic import history as H
 from mosaic.gui.choice_radio import RADIO_HELP
 
 from ._common import (
+    _PHASE_ATTR,
     _PHASE_BANDS,
     _PLOT_LIMIT,
     _RENDER_TARGET,
@@ -26,7 +28,106 @@ def _na_gap(vals):
     group is not applicable. ImPlot skips NaN, so an N/A group draws nothing
     instead of a flat line below the axis floor.
     """
-    return [_NAN if v < 0.0 else v for v in vals]
+    return np.where(vals < 0.0, _NAN, vals)
+
+
+def _x100(vals):
+    return vals * 100.0
+
+
+def _rating(vals):
+    """Penalty (0 = best) to rating (100 = best) for display."""
+    return 100.0 - vals
+
+
+# (buffer, history series, display units). Holistic charts show a rating,
+# splitting stays the raw penalty (uncapped in unclipped mode, so charting it
+# as 100 - x would be dishonest above 100). Per-group demographic values are
+# 0-100 with -1 meaning "not applicable", which charts as a gap.
+_FEEDS = (
+    ("_buf_score", H.SCORE, None),
+    ("_buf_acc", H.ACCEPTANCE, _x100),
+    ("_buf_temp", H.TEMPERATURE, None),
+    ("_buf_cs_score", "county_splits_score_history", None),
+    ("_buf_cs_excess", "county_excess_splits_history", None),
+    ("_buf_cs_clean", "county_unified_districts_history", None),
+    ("_buf_mm", "mm_history", None),
+    ("_buf_eg", "eg_history", None),
+    ("_buf_pb", "partisan_bias_history", None),
+    ("_buf_pg", "partisan_gini_history", None),
+    ("_buf_seats", "dem_seats_history", None),
+    ("_buf_pp", "pp_history", _x100),
+    ("_buf_reock", "reock_history", _x100),
+    ("_buf_hc", "holistic_compactness_history", _rating),
+    ("_buf_hsplit", "holistic_splitting_history", None),
+    ("_buf_hprop", "holistic_proportionality_history", _rating),
+    ("_buf_hcmp", "holistic_competitiveness_history", _rating),
+    ("_buf_rep_black", "representation_black_history", _na_gap),
+    ("_buf_rep_latino", "representation_latino_history", _na_gap),
+    ("_buf_rep_asian", "representation_asian_history", _na_gap),
+    ("_buf_coh_black", "cohesion_black_history", _na_gap),
+    ("_buf_coh_latino", "cohesion_latino_history", _na_gap),
+    ("_buf_coh_asian", "cohesion_asian_history", _na_gap),
+    ("_buf_rep_overall", "representation_overall_history", None),
+    ("_buf_coh_overall", "minority_cohesion_overall_history", None),
+    ("_buf_cong_black", "congruence_black_history", _na_gap),
+    ("_buf_cong_latino", "congruence_latino_history", _na_gap),
+    ("_buf_cong_asian", "congruence_asian_history", _na_gap),
+    ("_buf_cong_overall", "community_congruence_overall_history", None),
+    ("_buf_rep_black_seats", "representation_black_seats_history", None),
+    ("_buf_rep_latino_seats", "representation_latino_seats_history", None),
+    ("_buf_rep_asian_seats", "representation_asian_seats_history", None),
+    ("_buf_popdev", "pop_deviation_history", None),
+    ("_buf_popdev_max", "pop_dev_max_history", None),
+    ("_buf_popdev_mean", "pop_dev_mean_history", None),
+    ("_buf_align_penalty", "alignment_penalty_history", None),
+    ("_buf_align_mean", "alignment_mean_ret_history", None),
+    ("_buf_align_min", "alignment_min_ret_history", None),
+    ("_buf_cuts", H.CUT_EDGES, None),
+    ("_buf_maj_dem", "majority_dem_history", _x100),
+    ("_buf_maj_rep", "majority_rep_history", _x100),
+    ("_buf_hinge", "hinge_history", _x100),
+    ("_buf_inversion", "inversion_history", _x100),
+)
+
+# Series each chart needs recorded while it is open, even if its score is off.
+# Score, Temperature, Entropy and Cut Edges are always recorded.
+_PANEL_SERIES = {
+    "panel_county_splits": ("county_splits_score_history",
+                            "county_excess_splits_history",
+                            "county_unified_districts_history"),
+    "panel_mm": ("mm_history",),
+    "panel_eg": ("eg_history",),
+    "panel_pb": ("partisan_bias_history",),
+    "panel_pg": ("partisan_gini_history",),
+    "panel_dem_seats": ("dem_seats_history",),
+    "panel_majority": ("majority_dem_history", "majority_rep_history"),
+    "panel_hinge": ("hinge_history",),
+    "panel_pp": ("pp_history",),
+    "panel_reock": ("reock_history",),
+    "panel_representation": (
+        "representation_black_history", "representation_latino_history",
+        "representation_asian_history", "representation_black_seats_history",
+        "representation_latino_seats_history",
+        "representation_asian_seats_history", "representation_overall_history"),
+    "panel_minority_cohesion": (
+        "cohesion_black_history", "cohesion_latino_history",
+        "cohesion_asian_history", "minority_cohesion_overall_history"),
+    "panel_community_congruence": (
+        "congruence_black_history", "congruence_latino_history",
+        "congruence_asian_history", "community_congruence_overall_history"),
+    "panel_hc": ("holistic_compactness_history",),
+    "panel_hsplit": ("holistic_splitting_history",
+                     "county_splits_score_history",
+                     "county_excess_splits_history",
+                     "county_unified_districts_history"),
+    "panel_hprop": ("holistic_proportionality_history", "inversion_history"),
+    "panel_hcmp": ("holistic_competitiveness_history",),
+    "panel_popdev": ("pop_dev_max_history", "pop_dev_mean_history"),
+    "panel_alignment": ("alignment_penalty_history",
+                        "alignment_mean_ret_history",
+                        "alignment_min_ret_history"),
+}
 
 
 _TARGET_LABELS = (("black", "Black"), ("latino", "Latino"), ("asian", "Asian"))
@@ -556,120 +657,25 @@ class UpdatesMixin:
 
     def _update_plots_and_panels(self) -> None:
         """Per-frame plot redraws and side panel refreshes."""
-        # A read cursor past the end of a reset history yields an empty delta
-        # forever, freezing the charts; rebuild so they recover on their own.
-        with self.state._lock:
-            _desynced = self._buf_score.read > len(self.state.score_history)
-        if _desynced:
-            self._clear_all_series()
+        self._publish_history_needs()
+        self._update_memory_readout()
         # ── Plots ─────────────────────────────────────────────────────────────
-        # One lock acquisition, copying only the delta since the last call.
+        # One lock acquisition, copying only the points recorded since the last
+        # frame. If the history rewrote itself (thinned, or reverted to best),
+        # the delta is the whole, bounded series and the buffer starts over.
+        buffers = [(getattr(self, attr), key, fn) for attr, key, fn in _FEEDS]
         with self.state._lock:
-            _sd   = list(self.state.score_history[self._buf_score.read:])
-            _ad   = list(self.state.acceptance_rate_history[self._buf_acc.read:])
-            _td   = list(self.state.temperature_history[self._buf_temp.read:])
-            _csd  = list(self.state.county_splits_score_history[self._buf_cs_score.read:])
-            _ced  = list(self.state.county_excess_splits_history[self._buf_cs_excess.read:])
-            _cld  = list(self.state.county_unified_districts_history[self._buf_cs_clean.read:])
-            _md   = list(self.state.mm_history[self._buf_mm.read:])
-            _ed   = list(self.state.eg_history[self._buf_eg.read:])
-            _pbd  = list(self.state.partisan_bias_history[self._buf_pb.read:])
-            _pgd  = list(self.state.partisan_gini_history[self._buf_pg.read:])
-            _sed  = list(self.state.dem_seats_history[self._buf_seats.read:])
-            _pd   = list(self.state.pp_history[self._buf_pp.read:])
-            _rd   = list(self.state.reock_history[self._buf_reock.read:])
-            _hcd  = list(self.state.holistic_compactness_history[self._buf_hc.read:])
-            _hsd  = list(self.state.holistic_splitting_history[self._buf_hsplit.read:])
-            _hpd  = list(self.state.holistic_proportionality_history[self._buf_hprop.read:])
-            _hmd  = list(self.state.holistic_competitiveness_history[self._buf_hcmp.read:])
-            _pvd  = list(self.state.pop_deviation_history[self._buf_popdev.read:])
-            _pvd_max  = list(self.state.pop_dev_max_history[self._buf_popdev_max.read:])
-            _pvd_mean = list(self.state.pop_dev_mean_history[self._buf_popdev_mean.read:])
-            _alpd = list(self.state.alignment_penalty_history[self._buf_align_penalty.read:])
-            _almd = list(self.state.alignment_mean_ret_history[self._buf_align_mean.read:])
-            _alnd = list(self.state.alignment_min_ret_history[self._buf_align_min.read:])
-            _cutd = list(self.state.cut_edges_history[self._buf_cuts.read:])
-            _mjd  = list(self.state.majority_dem_history[self._buf_maj_dem.read:])
-            _mjr  = list(self.state.majority_rep_history[self._buf_maj_rep.read:])
-            _hgd  = list(self.state.hinge_history[self._buf_hinge.read:])
-            _ivd  = list(self.state.inversion_history[self._buf_inversion.read:])
-            _repb = list(self.state.representation_black_history[self._buf_rep_black.read:])
-            _repl = list(self.state.representation_latino_history[self._buf_rep_latino.read:])
-            _repa = list(self.state.representation_asian_history[self._buf_rep_asian.read:])
-            _repbs = list(
-                self.state.representation_black_seats_history[self._buf_rep_black_seats.read:])
-            _repls = list(
-                self.state.representation_latino_seats_history[self._buf_rep_latino_seats.read:])
-            _repas = list(
-                self.state.representation_asian_seats_history[self._buf_rep_asian_seats.read:])
-            _cohb = list(self.state.cohesion_black_history[self._buf_coh_black.read:])
-            _cohl = list(self.state.cohesion_latino_history[self._buf_coh_latino.read:])
-            _coha = list(self.state.cohesion_asian_history[self._buf_coh_asian.read:])
-            _repov = list(self.state.representation_overall_history[self._buf_rep_overall.read:])
-            _cohov = list(self.state.minority_cohesion_overall_history[self._buf_coh_overall.read:])
-            _congb = list(self.state.congruence_black_history[self._buf_cong_black.read:])
-            _congl = list(self.state.congruence_latino_history[self._buf_cong_latino.read:])
-            _conga = list(self.state.congruence_asian_history[self._buf_cong_asian.read:])
-            _congov = list(
-                self.state.community_congruence_overall_history[self._buf_cong_overall.read:])
-
-        self._buf_score.add(_sd)
-        self._buf_acc.add_pairs(_ad, scale=100.0)
-        self._buf_temp.add(_td)
-        self._buf_cs_score.add(_csd)
-        self._buf_cs_excess.add(_ced)
-        self._buf_cs_clean.add(_cld)
-        self._buf_mm.add(_md)
-        self._buf_eg.add(_ed)
-        self._buf_pb.add(_pbd)
-        self._buf_pg.add(_pgd)
-        self._buf_seats.add(_sed)
-        self._buf_pp.add([v * 100.0 for v in _pd])
-        self._buf_reock.add([v * 100.0 for v in _rd])
-        # Holistic charts: convert penalty (0=best) to rating (100=best) for display.
-        # Splitting is the exception -- its penalty is uncapped (unclipped mode),
-        # so it is charted as the raw penalty (0 = best) to stay honest above 100.
-        self._buf_hc.add([100.0 - v for v in _hcd])
-        self._buf_hsplit.add(_hsd)
-        self._buf_hprop.add([100.0 - v for v in _hpd])
-        self._buf_hcmp.add([100.0 - v for v in _hmd])
-        # Per-group display values are 0-100, with -1.0 meaning "not applicable"
-        # (below one proportional district, or no opportunity district drawable).
-        # Chart that as NaN, which ImPlot skips: plotted literally it drew a flat
-        # line just under the axis floor, and clipping it by starting the axis at 0
-        # would also clip a legitimate rating of 0.
-        self._buf_rep_black.add(_na_gap(_repb))    # already 0-100 ratings (per group)
-        self._buf_rep_latino.add(_na_gap(_repl))
-        self._buf_rep_asian.add(_na_gap(_repa))
-        self._buf_coh_black.add(_na_gap(_cohb))    # community-preservation % (per group)
-        self._buf_coh_latino.add(_na_gap(_cohl))
-        self._buf_coh_asian.add(_na_gap(_coha))
-        self._buf_rep_overall.add(_repov)   # aggregate representation penalty (0 = best)
-        self._buf_coh_overall.add(_cohov)   # aggregate cohesion penalty (0 = best)
-        self._buf_cong_black.add(_na_gap(_congb))   # per-group congruence %
-        self._buf_cong_latino.add(_na_gap(_congl))
-        self._buf_cong_asian.add(_na_gap(_conga))
-        self._buf_cong_overall.add(_congov)  # aggregate congruence penalty (0 = best)
-        self._buf_rep_black_seats.add(_repbs)   # expected opportunity districts (seats)
-        self._buf_rep_latino_seats.add(_repls)
-        self._buf_rep_asian_seats.add(_repas)
-        self._buf_popdev.add(_pvd)
-        self._buf_popdev_max.add(_pvd_max)
-        self._buf_popdev_mean.add(_pvd_mean)
-        self._buf_align_penalty.add(_alpd)
-        self._buf_align_mean.add(_almd)
-        self._buf_align_min.add(_alnd)
-        self._buf_cuts.add(_cutd)
-        self._buf_maj_dem.add([v * 100.0 for v in _mjd])
-        self._buf_maj_rep.add([v * 100.0 for v in _mjr])
-        self._buf_hinge.add([v * 100.0 for v in _hgd])
-        self._buf_inversion.add([v * 100.0 for v in _ivd])
+            hist = self.state.history
+            deltas = [hist.delta(key, buf.gen, buf.pos)
+                      for buf, key, _fn in buffers]
+        for (buf, key, fn), update in zip(buffers, deltas, strict=True):
+            buf.feed(update, fn=fn, drop_nan=key == H.ACCEPTANCE)
 
         limit = dpg.get_value(self._limit_plots) if self._limit_plots else False
 
         def _render(buf: _SeriesBuffer, series_tag: str, x_tag: str, y_tag: str,
                     fit_y: bool = True) -> None:
-            if not buf.ys:
+            if not len(buf):
                 dpg.set_value(series_tag, [[], []])
                 return
             total = len(buf.ys)
@@ -725,7 +731,7 @@ class UpdatesMixin:
             for buf, series in zip(buffers, (excess_series, count_series)):
                 _render(buf, series, x_axis, y_axis, fit_y=False)
             hi = max((max(buf.plot_data(limit)[1], default=0.0) for buf in buffers), default=0.0)
-            if self._buf_cs_clean.ys:
+            if len(self._buf_cs_clean):
                 target = (self._buf_cs_score.ys[-1] / 10.0
                           - self._buf_cs_excess.ys[-1] + self._buf_cs_clean.ys[-1])
                 xs, _ = self._buf_cs_clean.plot_data(limit)
@@ -839,7 +845,7 @@ class UpdatesMixin:
                         active_groups.add(group)
                     dpg.configure_item(f"representation_{group}_series",
                                        show=not overall and applicable)
-                    visible = seats and applicable and value > 0 and bool(buf.xs)
+                    visible = seats and applicable and value > 0 and len(buf) > 0
                     dpg.configure_item(tag, show=visible)
                     if visible:
                         xs, _ = buf.plot_data(limit)
@@ -886,7 +892,7 @@ class UpdatesMixin:
                         # bottom.
                         hi = target_hi
                         for group, _b in zip(("black", "latino", "asian"), bufs):
-                            if group in active_groups and _b.ys:
+                            if group in active_groups and len(_b):
                                 hi = max(hi, max(_b.plot_data(limit)[1]))
                         dpg.set_axis_limits("representation_y", 0.0, hi + max(0.1, hi * 0.05))
         if dpg.is_item_shown("popup_representation"):
@@ -1023,7 +1029,8 @@ class UpdatesMixin:
                 _render(self._buf_popdev_mean, "popdev_mean_series", "popdev_x", "popdev_y")
                 # Fit x-axis to data; set y-axis with floor at 0 and reasonable headroom.
                 dpg.fit_axis_data("popdev_x")
-                y_max = max(self._buf_popdev_max.ys) if self._buf_popdev_max.ys else 1.0
+                y_max = (float(np.nanmax(self._buf_popdev_max.ys))
+                         if len(self._buf_popdev_max) else 1.0)
                 dpg.set_axis_limits("popdev_y", 0.0, max(y_max * 1.15, 2.0))
         if dpg.is_item_shown("panel_alignment"):
             align_on = (dpg.get_value(self._alignment_enabled)
@@ -1160,6 +1167,40 @@ class UpdatesMixin:
                     self._on_file_save_assignments()
             elif dpg.is_key_pressed(dpg.mvKey_W):
                 self._on_close()
+
+    def _update_memory_readout(self) -> None:
+        """Run details: this process's memory, once a second and only while
+        the popup is open (reading it is a system call)."""
+        if not dpg.is_item_shown("popup_run_details"):
+            return
+        now = time.monotonic()
+        if now - self._mem_at < 1.0:
+            return
+        self._mem_at = now
+        from mosaic.memory import format_bytes, rss_bytes
+        with self.state._lock:
+            held = self.state.history.nbytes
+            stride = self.state.history.stride
+        text = f"Memory: {format_bytes(rss_bytes())}"
+        text += f"  (chart history {format_bytes(held)}"
+        text += f", one point per {stride:,} iterations)" if stride > 1 else ")"
+        dpg.set_value(self._mem_txt, text)
+
+    def _publish_history_needs(self) -> None:
+        """Tell the run which series the open charts need recorded. Only
+        written when it changes; the run reads it when a point is due."""
+        need = set()
+        for panel, keys in _PANEL_SERIES.items():
+            if dpg.does_item_exist(panel) and dpg.is_item_shown(panel):
+                need.update(keys)
+        if dpg.does_item_exist("panel_phase") and dpg.is_item_shown("panel_phase"):
+            need.update((_PHASE_ATTR[self._phase_x_label],
+                         _PHASE_ATTR[self._phase_y_label]))
+        need = frozenset(need)
+        if need != self._history_need:
+            self._history_need = need
+            with self.state._lock:
+                self.state.history.extra = need
 
     def _clear_all_series(self) -> None:
         """Clear local history buffers and blank all DPG plot series."""
