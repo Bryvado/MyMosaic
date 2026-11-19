@@ -48,6 +48,8 @@ def default_workers():
 _DATA = ("graph", "graph_ig", "populations", "county_array", "county_pops",
          "pp_data", "reock_data", "opportunity_coords", "alignment_data",
          "election_arrays", "vap_data")
+# score_config travels whole, so settings carried on it -- the opportunity
+# curve, the manual opportunity targets -- reach each worker with it.
 _SETTINGS = ("num_districts", "pop_tolerance", "max_iterations", "score_config",
              "annealing_config", "county_bias_enabled", "county_bias",
              "n3_probability", "n3_max_attempts_per_stage", "flip_enabled",

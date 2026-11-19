@@ -81,12 +81,20 @@ class OpportunityResult:
               (N/A gate).
     ceiling:  heuristic reference credit for the top-round(T) districts; the
               rating denominator.
+    target:   districts counted per group (round(T), or a manual override).
+    manual:   whether that target was set by hand rather than derived.
     """
     T: dict[str, float]
     P: dict[str, np.ndarray]
     ref: dict[str, float]
     feasible: dict[str, int] = field(default_factory=dict)
     ceiling: dict[str, float] = field(default_factory=dict)
+    # The number of districts actually counted for each group: round(T), or the
+    # user's own number where one was given. `manual` says which it is, which
+    # representation.py needs: a target set by hand is a statement that the
+    # group is to be scored, so it is not subject to the feasibility gate.
+    target: dict[str, int] = field(default_factory=dict)
+    manual: dict[str, bool] = field(default_factory=dict)
 
 
 def _group_vap(vap: dict, group: str) -> np.ndarray:
@@ -105,6 +113,42 @@ def _param(value, group: str) -> float:
 
 def _sigmoid(x: float) -> float:
     return 1.0 / (1.0 + np.exp(-x))
+
+
+def _resolve_target(T: float, n_districts: int, override=None) -> int:
+    """How many districts a group is scored over.
+
+    By default the proportional benchmark rounded to whole districts. With few
+    districts that rounding is the whole decision -- a group at 0.49 of a seat
+    rounds to zero and is not scored at all, one at 0.51 is scored over a full
+    district -- so a caller may name the number itself. A negative override
+    means "automatic"; anything else is clamped to the districts that exist.
+    """
+    if override is not None and int(override) >= 0:
+        return max(0, min(int(n_districts), int(override)))
+    return int(round(T))
+
+
+def _targets_key(targets=None) -> tuple[int, ...]:
+    """The manual targets as a cache-key part, in GROUPS order.
+
+    Both caches key on it: a changed target changes the feasibility gate, the
+    ceiling and the counted districts, so a stale entry would keep scoring the
+    old one.
+    """
+    if not targets:
+        return (-1,) * len(GROUPS)
+    return tuple(int(targets.get(g, -1)) for g in GROUPS)
+
+
+def config_targets(config) -> dict[str, int]:
+    """The manual targets a ScoreConfig carries, as {group: int}.
+
+    -1 is automatic, which is the default for every group. Kept here so the
+    group names live in one module.
+    """
+    return {g: int(getattr(config, f"opportunity_target_{g}", -1))
+            for g in GROUPS}
 
 
 # Assignment-independent, so memoised by demographic-array identity, district count,
@@ -319,11 +363,13 @@ def _ceiling_credit_sum(grp: np.ndarray, total: np.ndarray, ideal: float,
 def _geo_feasibility(vap: dict, total: np.ndarray, total_sw: float,
                      n_districts: int, midpoint, steepness, solid,
                      coords=None, smart_targets: bool = False,
+                     targets=None,
                      ) -> tuple[dict[str, int], dict[str, float]]:
     """Per-group (feasible flag, reference ceiling), memoised on the demographic
     arrays so repeated proposals reuse the preparation. The gate counts
     districts reachable at the opportunity midpoint (P = 0.5); the ceiling is the
-    heuristic credit reference over the top-round(T) bundles.
+    heuristic credit reference over the top bundles, as many as the group's
+    counted target -- a manual target therefore moves the ceiling with it.
 
     With smart_targets and coordinates, both are computed over local pools rather
     than a single statewide ranking. Local pools constrain distance but do not
@@ -337,7 +383,7 @@ def _geo_feasibility(vap: dict, total: np.ndarray, total_sw: float,
            tuple(round(_param(midpoint, g), 9) for g in GROUPS),
            tuple(round(_param(steepness, g), 9) for g in GROUPS),
            tuple(round(_param(solid, g), 9) for g in GROUPS),
-           smart, id(coords) if smart else 0)
+           smart, id(coords) if smart else 0, _targets_key(targets))
     cached = _GEO_CACHE.get(key)
     if cached is not None:
         return cached
@@ -355,7 +401,8 @@ def _geo_feasibility(vap: dict, total: np.ndarray, total_sw: float,
         tau = max(_param(steepness, g), 1e-6)
         s = _param(solid, g)
         ref = max(_sigmoid((s - m) / tau), 1e-9)
-        target = int(round((float(arr.sum()) / total_sw) * n_districts))
+        target = _resolve_target((float(arr.sum()) / total_sw) * n_districts,
+                                 n_districts, (targets or {}).get(g))
         if smart:
             feasible[g], ceiling[g] = _smart_targets(
                 arr, total, ideal, m, tau, s, ref, target, xy, _SMART_SLACK,
@@ -384,8 +431,12 @@ class _OppPrep:
     tau: dict[str, float]
     feasible: dict[str, int]
     ceiling: dict[str, float]
-    active: dict[str, bool]             # False = group is statewide-empty (zero-filled)
-    p_empty: dict[str, np.ndarray]      # constant per-district P for an empty group
+    # Districts counted per group, and whether that number was set by hand.
+    target: dict[str, int] = field(default_factory=dict)
+    manual: dict[str, bool] = field(default_factory=dict)
+    active: dict[str, bool] = field(default_factory=dict)  # False = statewide-empty
+    # constant per-district P for an empty group
+    p_empty: dict[str, np.ndarray] = field(default_factory=dict)
     # (n_precinct, 1+n_active): col 0 = total, then active groups. int32 when the
     # Demographic table is integral and in range, halving bytes streamed per proposal;
     # float64 otherwise. Accumulation is performed in float64 either way.
@@ -411,13 +462,16 @@ def _param_key(value) -> object:
 
 def _get_prep(vap: dict, n_districts: int, midpoint, steepness, solid,
               coords=None, smart_targets: bool = False,
-              prepare_targets: bool = True) -> _OppPrep:
+              prepare_targets: bool = True, targets=None) -> _OppPrep:
     # Key on array identity + params only -- no full-array touch on the hot (hit)
     # path. vap arrays are stable for a run, so identity pins their contents.
+    # The manual targets are in the key because they change the counted
+    # districts, the gate and the ceiling: without them a target edited
+    # mid-session would keep scoring the previous one.
     key = (id(vap["total"]), n_districts,
            _param_key(midpoint), _param_key(steepness), _param_key(solid),
            bool(smart_targets), id(coords) if coords is not None else 0,
-           bool(prepare_targets))
+           bool(prepare_targets), _targets_key(targets))
     # Target-free exports are one-shot reads; do not retain their demographic
     # matrices or let them reuse run-scoring preparation.
     cached = _PREP_CACHE.get(key) if prepare_targets else None
@@ -432,6 +486,8 @@ def _get_prep(vap: dict, n_districts: int, midpoint, steepness, solid,
     tau: dict[str, float] = {}
     active: dict[str, bool] = {}
     p_empty: dict[str, np.ndarray] = {}
+    target: dict[str, int] = {}
+    manual: dict[str, bool] = {}
     for g in GROUPS:
         arr = np.ascontiguousarray(_group_vap(vap, g), dtype=np.float64)
         vap_f[g] = arr
@@ -444,6 +500,9 @@ def _get_prep(vap: dict, n_districts: int, midpoint, steepness, solid,
         sw = float(arr.sum())
         sw_share = (sw / total_sw) if total_sw > 0.0 else 0.0
         T[g] = sw_share * n_districts
+        override = (targets or {}).get(g)
+        manual[g] = override is not None and int(override) >= 0
+        target[g] = _resolve_target(T[g], n_districts, override)
         # A statewide-empty group (zero-filled, unselected) has share 0 in every
         # district -> a constant P; skip its bincount and reuse this array.
         active[g] = sw > 0.0
@@ -452,7 +511,7 @@ def _get_prep(vap: dict, n_districts: int, midpoint, steepness, solid,
     if prepare_targets:
         feasible, ceiling = _geo_feasibility(
             vap, total_f, total_sw, n_districts, midpoint, steepness, solid,
-            coords=coords, smart_targets=smart_targets)
+            coords=coords, smart_targets=smart_targets, targets=targets)
     else:
         feasible, ceiling = {}, {}
     # Stack total + the active groups into one contiguous (n_precinct, 1+k)
@@ -470,7 +529,9 @@ def _get_prep(vap: dict, n_districts: int, midpoint, steepness, solid,
     W = np.ascontiguousarray(W)
     active_cols = {g: i + 1 for i, g in enumerate(active_groups)}
     prep = _OppPrep(total_f=total_f, vap_f=vap_f, T=T, ref=ref, m=m, tau=tau,
-                    feasible=feasible, ceiling=ceiling, active=active, p_empty=p_empty,
+                    feasible=feasible, ceiling=ceiling,
+                    target=target, manual=manual,
+                    active=active, p_empty=p_empty,
                     W=W, active_cols=active_cols,
                     m_arr=np.array([m[g] for g in active_groups], dtype=np.float64),
                     tau_arr=np.array([tau[g] for g in active_groups],
@@ -482,23 +543,28 @@ def _get_prep(vap: dict, n_districts: int, midpoint, steepness, solid,
 
 def warm_opportunity_geo(vap: dict, n_districts: int, *, midpoint=0.44,
                          steepness=0.05, solid=0.55, coords=None,
-                         smart_targets: bool = False) -> None:
+                         smart_targets: bool = False, targets=None) -> None:
     """Precompute and cache the heuristic geographic references for these inputs.
 
     The preparation is memoised inside compute_opportunity. Callers may invoke
     this function before scoring so the first proposal does not pay that cost.
     """
     _get_prep(vap, n_districts, midpoint, steepness, solid,
-              coords=coords, smart_targets=smart_targets)
+              coords=coords, smart_targets=smart_targets, targets=targets)
 
 
 def opportunity_targets(vap: dict, n_districts: int, *, midpoint=0.44,
                         steepness=0.05, solid=0.55, coords=None,
-                        smart_targets: bool = False) -> dict[str, dict]:
+                        smart_targets: bool = False,
+                        targets=None) -> dict[str, dict]:
     """Per-group targets for display: what the score is aiming at, before any
     assignment exists.
 
-        target   -- opportunity districts counted (round(T), the proportional seats)
+        target   -- opportunity districts counted: round(T), the proportional
+                    seats, or the manual target where one was given
+        auto_target -- round(T), what the automatic rule would count, so the
+                    interface can show it beside a manual number
+        manual   -- whether this group's target was set by hand
         feasible -- whether the greedy bundle heuristic finds at least one
                     qualifying bundle
         ceiling  -- credit reference from the heuristic's top target-many
@@ -511,8 +577,12 @@ def opportunity_targets(vap: dict, n_districts: int, *, midpoint=0.44,
     `warm_opportunity_geo` is free.
     """
     prep = _get_prep(vap, n_districts, midpoint, steepness, solid,
-                     coords=coords, smart_targets=smart_targets)
-    return {g: {"T": prep.T[g], "target": int(round(prep.T[g])),
+                     coords=coords, smart_targets=smart_targets,
+                     targets=targets)
+    return {g: {"T": prep.T[g],
+                "target": int(prep.target.get(g, round(prep.T[g]))),
+                "auto_target": int(round(prep.T[g])),
+                "manual": bool(prep.manual.get(g, False)),
                 "feasible": int(prep.feasible.get(g, 0)),
                 "ceiling": float(prep.ceiling.get(g, 0.0))}
             for g in GROUPS}
@@ -528,6 +598,7 @@ def compute_opportunity(
     solid=0.55,
     coords=None,
     smart_targets: bool = False,
+    targets=None,
     _prepared: _OppPrep | None = None,
 ) -> OpportunityResult:
     """
@@ -544,6 +615,9 @@ def compute_opportunity(
         smart_targets: build the heuristic references from distance-ranked local
                     pools instead of statewide rankings. The bundles still do
                     not enforce district contiguity. Ignored without coords.
+        targets:    optional {group: int} manual target per group; -1 or absent
+                    means the proportional rule decides. Clamped to
+                    [0, n_districts].
 
     Returns:
         OpportunityResult with T, P, ref, feasible, ceiling keyed by GROUPS.
@@ -553,7 +627,8 @@ def compute_opportunity(
     # retain the parameter-keyed lookup, including after settings change.
     prep = (_prepared if _prepared is not None else
             _get_prep(vap, n_districts, midpoint, steepness, solid,
-                      coords=coords, smart_targets=smart_targets))
+                      coords=coords, smart_targets=smart_targets,
+                      targets=targets))
     # Single fused Numba pass: per-district sums for total (col 0) + every active
     # group, then the logistic curve per district.
     _, P_act = _accum_and_curve(assignment, prep.W, n_districts,
@@ -565,15 +640,20 @@ def compute_opportunity(
             continue
         P[g] = P_act[prep.active_cols[g] - 1]
     return OpportunityResult(T=prep.T, P=P, ref=prep.ref,
-                             feasible=prep.feasible, ceiling=prep.ceiling)
+                             feasible=prep.feasible, ceiling=prep.ceiling,
+                             target=prep.target, manual=prep.manual)
 
 
 def district_opportunity_credit(assignment, vap, n_districts, *, midpoint=0.44,
-                                steepness=0.05, solid=0.55, groups=GROUPS):
+                                steepness=0.05, solid=0.55, groups=GROUPS,
+                                targets=None):
     """Per-district normalized credit without plan-wide target preparation.
 
     Uses the scorer's accumulation, probability curve, and solid-share reference.
-    Geographic feasibility and ceiling estimates do not affect these credits.
+    Geographic feasibility and ceiling estimates do not affect these credits,
+    and neither does a target: a district's credit is its own share on the
+    curve, whatever number of districts the plan-wide rating counts. ``targets``
+    is accepted so every caller can pass the scoring settings through whole.
     """
     assignment = np.asarray(assignment)
     if (assignment.ndim != 1 or not np.issubdtype(assignment.dtype, np.integer)
@@ -591,6 +671,6 @@ def district_opportunity_credit(assignment, vap, n_districts, *, midpoint=0.44,
                 or _param(steepness, group) <= 0):
             raise ValueError("Opportunity parameters must be finite, with positive steepness")
     prep = _get_prep(vap, n_districts, midpoint, steepness, solid,
-                     prepare_targets=False)
+                     prepare_targets=False, targets=targets)
     opp = compute_opportunity(assignment, vap, n_districts, _prepared=prep)
     return {g: np.clip(opp.P[g] / opp.ref[g], 0.0, 1.0) for g in groups}

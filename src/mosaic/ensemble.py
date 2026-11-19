@@ -90,7 +90,12 @@ def _measure_config(cfg: ScoreConfig, have: dict[str, bool]) -> ScoreConfig:
     """Every available metric on, in one fixed form so summaries don't depend
     on what the run optimized. Holistic ratings use the unclipped default: the
     clipped scorecard saturates (Reock above 0.50 pins its half of Compactness),
-    which would hide variation the optimizer is still acting on. EG is static."""
+    which would hide variation the optimizer is still acting on. EG is static.
+
+    What a metric *measures* is kept, only its weight is forced: the manual
+    Electoral Opportunity targets ride along on the config, so the batch
+    summary counts the same districts per group the runs were scored over.
+    """
     on = {f.name: 1.0 for f in dataclasses.fields(ScoreConfig)
           if f.name.startswith("weight_")}
     if not have.get("reference"):

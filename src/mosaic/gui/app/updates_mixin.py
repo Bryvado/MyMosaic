@@ -160,12 +160,21 @@ def _opportunity_target_lines(targets: dict,
             out.append((f"{name}: no column loaded", "disabled_deep"))
             continue
         drawable = int(round(t.get("ceiling", 0.0)))
-        if int(t.get("target", 0)) < 1:
-            out.append((f"{name}: reference below 1 district", "disabled_deep"))
+        manual = bool(t.get("manual", False))
+        counted = int(t.get("target", 0))
+        note = f", {counted} counted by hand" if manual else ""
+        if counted < 1:
+            out.append(((f"{name}: left out by hand" if manual
+                         else f"{name}: reference below 1 district"),
+                        "disabled_deep"))
         elif not t.get("feasible", 0) or drawable < 1:
-            out.append((f"{name}: no local reference found", "disabled_deep"))
+            # A manual target is scored whatever the heuristic found, so say
+            # the group is counted rather than dropped.
+            out.append(((f"{name}: no local reference found{note}" if manual
+                         else f"{name}: no local reference found"),
+                        "body" if manual else "disabled_deep"))
         else:
-            out.append((f"{name}: {drawable}-district reference", "body"))
+            out.append((f"{name}: {drawable}-district reference{note}", "body"))
     return out
 
 
@@ -565,12 +574,16 @@ class UpdatesMixin:
         # Keep district-count-dependent sliders bounded
         n_dist_val = dpg.get_value(self._num_districts)
         dpg.configure_item(self._hinge_threshold,  max_value=n_dist_val)
+        self._clamp_opportunity_targets(n_dist_val)
 
         # ── Button states ─────────────────────────────────────────────────────
-        # Scores stay editable during a run: a change applies to the next run,
-        # since the running config is frozen at start.
+        # Scores stay editable during a run, and a change now reaches the
+        # running chain: _tick_live_reweight publishes it once the edits
+        # settle. The settings a chain cannot be handed are locked instead.
         self._sync_seed_controls()
         self._sync_preset_controls()
+        self._sync_run_locked_controls()
+        self._tick_live_reweight()
         self._tick_calibration()
         self._sync_goals_panel()
         self._sync_calibration_row()
@@ -674,6 +687,8 @@ class UpdatesMixin:
             hist = self.state.history
             deltas = [hist.delta(key, buf.gen, buf.pos)
                       for buf, key, _fn in buffers]
+            # Iterations where the run's scoring changed, for the marker lines.
+            marks = hist.marks()
         for (buf, key, fn), update in zip(buffers, deltas, strict=True):
             buf.feed(update, fn=fn, drop_nan=key == H.ACCEPTANCE)
 
@@ -725,6 +740,7 @@ class UpdatesMixin:
             else:
                 xs, ys = buf.plot_data(limit)
             dpg.set_value(series_tag, [xs, ys])
+            self._draw_reweight_marks(y_tag, marks)
             dpg.fit_axis_data(x_tag)
             # Skip y-fit for axes locked to a fixed range (e.g. probability
             # axes [0, 100]) — otherwise fit_axis_data overrides the lock
@@ -844,9 +860,12 @@ class UpdatesMixin:
                     target = self.state.opportunity_targets.get(group, {})
                     provided = self.state.race_groups_provided
                     value = int(round(target.get("ceiling", 0.0)))
+                    # A manual target stands in for the heuristic gate, the
+                    # same rule the score itself applies.
                     applicable = ((not provided or group in provided)
                                   and target.get("target", 0) >= 1
-                                  and bool(target.get("feasible", False)))
+                                  and bool(target.get("feasible", False)
+                                           or target.get("manual", False)))
                     if applicable:
                         active_groups.add(group)
                     dpg.configure_item(f"representation_{group}_series",
@@ -902,6 +921,7 @@ class UpdatesMixin:
                                 hi = max(hi, max(_b.plot_data(limit)[1]))
                         dpg.set_axis_limits("representation_y", 0.0, hi + max(0.1, hi * 0.05))
         if dpg.is_item_shown("popup_representation"):
+            self._sync_opportunity_target_rows()
             # Targets are run-constant, so rebuild the text only when they change
             # rather than every frame the popup happens to be open.
             _tg = self.state.opportunity_targets
@@ -1208,6 +1228,47 @@ class UpdatesMixin:
             with self.state._lock:
                 self.state.history.extra = need
 
+    def _reweight_line_theme(self):
+        """Theme for the reweight marker: one thin line in the separator
+        colour, which is this palette's quietest rule. Rebuilt after a theme
+        swap so the marker follows light and dark like everything else."""
+        name = self.theme.palette.name
+        if getattr(self, "_reweight_theme_for", None) != name:
+            with dpg.theme() as theme:
+                with dpg.theme_component(dpg.mvInfLineSeries):
+                    dpg.add_theme_color(dpg.mvPlotCol_Line,
+                                        self.theme.color("separator"),
+                                        category=dpg.mvThemeCat_Plots)
+                    dpg.add_theme_style(dpg.mvPlotStyleVar_LineWeight, 1.0,
+                                        category=dpg.mvThemeCat_Plots)
+            self._reweight_theme = theme
+            self._reweight_theme_for = name
+        return self._reweight_theme
+
+    def _draw_reweight_marks(self, y_tag: str, marks) -> None:
+        """A thin vertical line on one chart at each reweight.
+
+        The series before and after such a line were not produced by the same
+        objective, which is worth saying on the chart rather than only in the
+        log. Created on the chart's own axis the first time that chart is
+        drawn, so no panel builder has to know about it, and rewritten only
+        when the markers change.
+        """
+        if not marks and y_tag not in getattr(self, "_marks_drawn", {}):
+            return
+        drawn = self._marks_drawn
+        if drawn.get(y_tag) == marks:
+            return
+        tag = f"{y_tag}_reweight"
+        if not dpg.does_item_exist(tag):
+            if not dpg.does_item_exist(y_tag):
+                return
+            dpg.add_inf_line_series([], tag=tag, parent=y_tag,
+                                    label="##reweight")
+            dpg.bind_item_theme(tag, self._reweight_line_theme())
+        dpg.set_value(tag, [list(marks)])
+        drawn[y_tag] = marks
+
     def _clear_all_series(self) -> None:
         """Clear local history buffers and blank all DPG plot series."""
         for buf in (
@@ -1293,6 +1354,11 @@ class UpdatesMixin:
         for ax in ("representation_y", "community_congruence_y"):
             dpg.set_axis_limits(ax, 0.0, 100.0)
         dpg.set_axis_limits("minority_cohesion_y", -4.0, 104.0)
+        for tag in self._marks_drawn:
+            marker = f"{tag}_reweight"
+            if dpg.does_item_exist(marker):
+                dpg.set_value(marker, [[]])
+        self._marks_drawn = {}
         self._rep_mode = None
         self._phase_prev_n = 0
         self._phase_lim = None

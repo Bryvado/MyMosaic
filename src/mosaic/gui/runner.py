@@ -46,6 +46,7 @@ from mosaic.scoring.minority_cohesion import (
     precompute_minority_cohesion_data,
 )
 from mosaic.scoring.opportunity import (
+    config_targets,
     opportunity_targets,
     precompute_opportunity_coords,
     warm_opportunity_geo,
@@ -532,6 +533,94 @@ class AlgorithmRunner:
             opportunity_coords=self.opportunity_coords,
         )
 
+    def _prepare_scoring(self, score_config, assignment):
+        """Everything that depends on ``score_config`` and feeds ``score_plan``.
+
+        Returns ``(score_plan kwargs, compactness cache or None)``. One place
+        builds all of it, because it is built twice: at run start, and again
+        whenever the running chain is handed new weights. A reweight that
+        rebuilt only some of this would score the new objective with the old
+        preparation -- an Electoral Opportunity weight switched on with no
+        warmed geography, a Compactness weight switched on with no cache.
+
+        The district count and the map-wide tolerance come from shared state,
+        which nothing may change while a run is in flight (the interface locks
+        both), so a reweight reads the same values the run started with.
+
+        ``assignment`` is the plan the compactness cache starts from: the cache
+        tracks changes against an accepted plan, so re-scoring a different plan
+        needs its own.
+        """
+        num_districts, tolerance, ratchet_mode = self.state.get(
+            "num_districts", "pop_tolerance", "tolerance_ratchet_mode")
+
+        # Electoral Opportunity geography (smart targets): a local-pool sweep over
+        # the whole state. Memoised, but it would otherwise run inside the first
+        # scored proposal and look like a stall, so warm it here where the status
+        # line can name it. Seconds on a large state; nothing per-iteration.
+        if self.vap_data is not None and score_config.weight_representation:
+            _smart = bool(score_config.opportunity_smart_targets
+                          and self.opportunity_coords is not None)
+            _geo_kw = dict(
+                midpoint=score_config.opportunity_midpoint,
+                steepness=score_config.opportunity_steepness,
+                solid=score_config.opportunity_solid,
+                coords=self.opportunity_coords if _smart else None,
+                smart_targets=_smart,
+                targets=config_targets(score_config),
+            )
+            if _smart:
+                self.state.update(status_message="Computing smart targets...")
+            _t0 = time.perf_counter()
+            warm_opportunity_geo(self.vap_data, num_districts, **_geo_kw)
+            if _smart:
+                log.info("Smart Targets computed in "
+                         f"{time.perf_counter() - _t0:.1f}s")
+            # Constant for as long as the scoring is: the settings popup reads
+            # this instead of tracking per-iteration ratings.
+            _targets = opportunity_targets(self.vap_data, num_districts, **_geo_kw)
+            self.state.opportunity_targets = _targets
+            # A manual target is a statement that the group is to be scored,
+            # so it stands in for the heuristic gate here as it does in the
+            # score itself.
+            self._set_race_applicable(
+                "representation",
+                any(t["target"] >= 1 and (t["feasible"] or t["manual"])
+                    for t in _targets.values()),
+            )
+
+        skw = self.score_kwargs(num_districts, tolerance, score_config)
+        if self.vap_data is not None and score_config.weight_representation:
+            from mosaic.scoring.opportunity import _get_prep
+
+            # Match score_plan's exact input convention.
+            skw["_opportunity_prep"] = _get_prep(
+                self.vap_data, num_districts, score_config.opportunity_midpoint,
+                score_config.opportunity_steepness, score_config.opportunity_solid,
+                coords=self.opportunity_coords,
+                smart_targets=score_config.opportunity_smart_targets,
+                targets=config_targets(score_config))
+
+        # With the Tolerance Ratchet on, pop-deviation components are forced so
+        # pop_dev_max is available regardless of the deviation score's weight.
+        if (ratchet_mode or "off") in ("standard", "strict"):
+            skw["force_pop_components"] = True
+
+        # Both compactness components share one ordered affected-region scan.
+        # A proposal owns its new buffers; rejection leaves the accepted cache
+        # unchanged.
+        cache = None
+        if (self.pp_data is not None and self.reock_data is not None
+                and (score_config.weight_polsby_popper
+                     or score_config.weight_holistic_compactness)
+                and (score_config.weight_reock
+                     or score_config.weight_holistic_compactness)):
+            cache = CompactnessCache(assignment, num_districts,
+                                     self.pp_data, self.reock_data)
+            skw["_compactness_scores"] = (cache.current.pp_score,
+                                          cache.current.reock_score)
+        return skw, cache
+
     def run_algorithm(self):
         """Main ReCom + annealing loop."""
         if self.graph is None or self.populations is None or self.graph_ctx is None:
@@ -653,47 +742,6 @@ class AlgorithmRunner:
                 + ")"
             )
 
-        # Electoral Opportunity geography (smart targets): a local-pool sweep over
-        # the whole state. Memoised, but it would otherwise run inside the first
-        # scored proposal and look like a stall, so warm it here where the status
-        # line can name it. Seconds on a large state; nothing per-iteration.
-        if self.vap_data is not None and score_config.weight_representation:
-            _smart = bool(score_config.opportunity_smart_targets
-                          and self.opportunity_coords is not None)
-            _geo_kw = dict(
-                midpoint=score_config.opportunity_midpoint,
-                steepness=score_config.opportunity_steepness,
-                solid=score_config.opportunity_solid,
-                coords=self.opportunity_coords if _smart else None,
-                smart_targets=_smart,
-            )
-            if _smart:
-                self.state.update(status_message="Computing smart targets...")
-            _t0 = time.perf_counter()
-            warm_opportunity_geo(self.vap_data, num_districts, **_geo_kw)
-            if _smart:
-                log.info("Smart Targets computed in "
-                         f"{time.perf_counter() - _t0:.1f}s")
-            # Run-constant; the settings popup reads this instead of tracking
-            # per-iteration ratings.
-            _targets = opportunity_targets(self.vap_data, num_districts, **_geo_kw)
-            self.state.opportunity_targets = _targets
-            self._set_race_applicable(
-                "representation",
-                any(t["target"] >= 1 and t["feasible"] for t in _targets.values()),
-            )
-
-        _skw = self.score_kwargs(num_districts, tolerance, score_config)
-        if self.vap_data is not None and score_config.weight_representation:
-            from mosaic.scoring.opportunity import _get_prep
-
-            # Match score_plan's exact input convention; refresh for each run.
-            _skw["_opportunity_prep"] = _get_prep(
-                self.vap_data, num_districts, score_config.opportunity_midpoint,
-                score_config.opportunity_steepness, score_config.opportunity_solid,
-                coords=self.opportunity_coords,
-                smart_targets=score_config.opportunity_smart_targets)
-
         # ── Tolerance Ratchet setup ──────────────────────────────────────────
         # active_tolerance starts at the user's map-wide tolerance and only ever
         # tightens. effective_floor is clamped to the start so a preset already
@@ -706,7 +754,8 @@ class AlgorithmRunner:
         active_tolerance = tolerance
         ratchet_floor = min(_RATCHET_FLOOR, tolerance)
         if ratchet_on:
-            _skw["force_pop_components"] = True
+            # force_pop_components is set by _prepare_scoring, which reads the
+            # ratchet mode itself, so a reweight cannot drop it.
             log.info(
                 f"Tolerance Ratchet ({ratchet_mode}): {tolerance*100:.2f}% -> "
                 f"{ratchet_floor*100:.2f}% over run progress "
@@ -785,18 +834,10 @@ class AlgorithmRunner:
             # Proposals exclude locked boundaries; scoring retains every cut edge.
             proposal_cut_indices = (cut_edge_indices if movable_edges is None
                                     else cut_edge_indices[movable_edges[cut_edge_indices]])
-            # Both compactness components share one ordered affected-region
-            # scan. A proposal owns its new buffers; rejection leaves the
-            # accepted cache unchanged. Recreate the cache for every new run.
-            compactness_cache = None
-            if (self.pp_data is not None and self.reock_data is not None
-                    and (score_config.weight_polsby_popper
-                         or score_config.weight_holistic_compactness)
-                    and (score_config.weight_reock or score_config.weight_holistic_compactness)):
-                compactness_cache = CompactnessCache(
-                    assignment, num_districts, self.pp_data, self.reock_data)
-                _skw["_compactness_scores"] = (
-                    compactness_cache.current.pp_score, compactness_cache.current.reock_score)
+            # Everything the weights decide, built for this plan. Recreated for
+            # every new run, and again on every reweight.
+            _skw, compactness_cache = self._prepare_scoring(
+                score_config, assignment)
             current_ps = score_plan(cut_edge_indices, score_config,
                                     assignment=assignment, **_skw)
 
@@ -850,6 +891,102 @@ class AlgorithmRunner:
                     return None
                 return sum(worse_window) / len(worse_window)
 
+            def _reweight(new_config) -> None:
+                """Switch the running chain to ``new_config``.
+
+                A weight change is a change of objective, so nothing the chain
+                carries from the old one can be read as it stands: the current
+                plan's total, the best plan's total, and the temperature are
+                all in the old units. Each is rebased here rather than left to
+                drift, which is what makes the change usable mid-run instead of
+                merely applied.
+                """
+                nonlocal score_config, _skw, compactness_cache, current_ps
+                old_total = current_ps.total
+
+                # 1. Everything the weights decide, for the plan on screen.
+                _skw, compactness_cache = self._prepare_scoring(
+                    new_config, assignment)
+                # 2. The current plan, in the new units.
+                current_ps = score_plan(cut_edge_indices, new_config,
+                                        assignment=assignment, **_skw)
+                breakdown = _build_score_breakdown(current_ps, new_config)
+
+                # 3. The best plan, in the new units too. The two totals are
+                #    only comparable once both have been re-scored, and the
+                #    plan that was best under the old weights need not be best
+                #    under these.
+                with self.state._lock:
+                    best_assignment = (self.state.best_assignment.copy()
+                                       if self.state.best_assignment is not None
+                                       else None)
+                    best_iteration = self.state.best_iteration
+                best_total = float("inf")
+                best_breakdown: dict = {}
+                best_cuts = 0
+                if best_assignment is not None:
+                    best_cut_indices = ctx.compute_cut_edges(best_assignment)
+                    best_skw, _best_cache = self._prepare_scoring(
+                        new_config, best_assignment)
+                    best_ps = score_plan(best_cut_indices, new_config,
+                                         assignment=best_assignment, **best_skw)
+                    best_total = best_ps.total
+                    best_breakdown = _build_score_breakdown(best_ps, new_config)
+                    best_cuts = best_ps.cut_edges
+                if current_ps.total < best_total:
+                    best_assignment = assignment.copy()
+                    best_total = current_ps.total
+                    best_iteration = iteration
+                    best_breakdown = breakdown
+                    best_cuts = current_ps.cut_edges
+
+                # 4. Temperature is a scale on score differences, so it only
+                #    means the same thing after being scaled the way the scores
+                #    were. The cooling rate is a per-iteration ratio and is
+                #    left alone.
+                if ann is not None and old_total > 0.0 and current_ps.total > 0.0:
+                    factor = current_ps.total / old_total
+                    ann.temperature *= factor
+                    ann.initial_temp *= factor
+
+                # 5. The new config takes over for the rest of the loop, and
+                #    the acceptance window starts again: the moves in it were
+                #    judged against the old objective.
+                score_config = new_config
+                worse_window.clear()
+                with self.state._lock:
+                    self.state.score_config = new_config
+                    self.state.reweight_count += 1
+                    count = self.state.reweight_count
+                    # 6. The charts need to know: series that were not being
+                    #    kept start being kept from here, and the iteration is
+                    #    marked so a reader can see the objective changed.
+                    self.state.history.reconfigure(new_config, iteration)
+                self.state.update(
+                    current_score=current_ps.total,
+                    current_cut_edges=current_ps.cut_edges,
+                    score_breakdown=breakdown,
+                    best_assignment=best_assignment,
+                    best_score=best_total,
+                    best_iteration=best_iteration,
+                    best_cut_edges=best_cuts,
+                    best_score_breakdown=best_breakdown,
+                    current_temperature=(ann.temperature if ann is not None
+                                         else 0.0),
+                    map_needs_update=True,
+                    status_message=f"Weights updated at iteration {iteration}",
+                )
+                log.info(
+                    "Reweighted at iteration %d (%d so far): score %.1f -> %.1f, "
+                    "best %.1f at iteration %d%s. A reweighted run is no longer "
+                    "replayable from its seed.",
+                    iteration, count, old_total, current_ps.total, best_total,
+                    best_iteration,
+                    (f", temperature x{current_ps.total / old_total:.3f}"
+                     if ann is not None and old_total > 0.0
+                     and current_ps.total > 0.0 else ""),
+                )
+
             for iteration in range(1, max_iterations + 1):
                 # Launch Watch: re-anchor temperature after the first N iters
                 # using the post-warmup current score rather than the initial.
@@ -869,7 +1006,12 @@ class AlgorithmRunner:
                         f"to {ann.initial_temp:.3f}, "
                         f"cooling_rate={ann.cooling_rate:.6f}"
                     )
-                if self.state.check_should_stop():
+                # Stop, pause and a pending reweight are asked for together:
+                # one lock acquisition at the top of the iteration.
+                _stop, _pause, _new_config = self.state.take_control()
+                if _new_config is not None:
+                    _reweight(_new_config)
+                if _stop:
                     log.info("Stopped by user")
                     self.state.update(
                         status=AlgorithmStatus.IDLE,
@@ -879,15 +1021,22 @@ class AlgorithmRunner:
                     )
                     return
 
-                if self.state.check_should_pause():
+                if _pause:
                     _pause_start = time.time()
                     self.state.update(
                         status=AlgorithmStatus.PAUSED,
                         status_message="Paused",
                         pause_time=_pause_start,
                     )
-                    while self.state.check_should_pause():
-                        if self.state.check_should_stop():
+                    while True:
+                        # A reweight made while paused takes effect here, so
+                        # the map and the score tiles show the new weights
+                        # before Resume rather than after the next iteration.
+                        _stop, _pause, _new_config = self.state.take_control()
+                        if _new_config is not None:
+                            _reweight(_new_config)
+                            self.state.update(status=AlgorithmStatus.PAUSED)
+                        if _stop:
                             self.state.update(
                                 status=AlgorithmStatus.IDLE,
                                 status_message="Stopped",
@@ -895,6 +1044,8 @@ class AlgorithmRunner:
                                 pause_time=0.0,
                             )
                             return
+                        if not _pause:
+                            break
                         time.sleep(0.05)
                     # Shift start_time forward by pause duration so IPS stays accurate
                     (current_start,) = self.state.get("start_time")

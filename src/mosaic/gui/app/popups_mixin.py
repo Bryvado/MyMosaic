@@ -4,7 +4,17 @@ import math
 from mosaic.gui.choice_radio import choice_radio
 from mosaic.scoring.opportunity import GROUPS
 
-from ._common import _DOCS_SHAPEFILE_URL, _DOCS_URL, __version__, dpg, webbrowser
+from ._common import (
+    _DOCS_SHAPEFILE_URL,
+    _DOCS_URL,
+    __version__,
+    dpg,
+    np,
+    webbrowser,
+)
+
+# Group names as the interface writes them, in GROUPS order.
+_GROUP_LABELS = {"black": "Black", "latino": "Latino", "asian": "Asian"}
 
 # Population Tolerance bounds, shared by the percentage slider and the people
 # slider that mirrors it.
@@ -655,6 +665,10 @@ class PopupsMixin:
             dpg.add_spacer(height=10)
             dpg.add_separator()
             dpg.add_spacer(height=6)
+            self._build_opportunity_target_rows()
+            dpg.add_spacer(height=10)
+            dpg.add_separator()
+            dpg.add_spacer(height=6)
             self.theme.text("Opportunity curve", "heading")
 
             self._opportunity_midpoint = dpg.add_slider_float(
@@ -700,6 +714,120 @@ class PopupsMixin:
             ]
             self._repr_counts_lbl = self.theme.text(
                 "Start a run to estimate the reference.", "muted", wrap=440)
+
+    def _build_opportunity_target_rows(self):
+        """How many districts each group is scored over.
+
+        The automatic rule is the group's statewide share times the district
+        count, rounded. With few districts that rounding is the whole decision:
+        a group at 0.49 of a district rounds to none and is not scored at all,
+        while one at 0.51 is scored over a whole district. These rows let the
+        number be named instead.
+
+        A row is built for every group Mosaic scores and shown for the ones
+        this shapefile supplied a column for, since the widgets have to exist
+        before any file is open.
+        """
+        self.theme.text("Districts counted", "heading")
+        self.theme.text(
+            "How many districts each group is scored over. Automatic uses the "
+            "group's share of the state, rounded. Zero leaves the group out.",
+            "muted", wrap=440)
+        dpg.add_spacer(height=4)
+        self._opportunity_target_rows = {}
+        self._opportunity_target_auto = {}
+        self._opportunity_target_count = {}
+        for group in GROUPS:
+            with dpg.group(horizontal=True, show=False) as row:
+                self.theme.text(_GROUP_LABELS[group], "subheading")
+                self._opportunity_target_auto[group] = dpg.add_checkbox(
+                    label="Automatic", default_value=True,
+                    callback=self._on_opportunity_target_change)
+                # min_clamped/max_clamped, not `clamped`: an input_int
+                # enforces its bounds on typed text only when both are set.
+                self._opportunity_target_count[group] = dpg.add_input_int(
+                    default_value=0, min_value=0, max_value=1, step=1,
+                    width=96, enabled=False,
+                    min_clamped=True, max_clamped=True,
+                    callback=self._on_opportunity_target_change)
+            self._opportunity_target_rows[group] = row
+            self._tooltip(self._opportunity_target_auto[group],
+                          "Count this group's proportional share of districts, "
+                          "rounded to a whole number.")
+        self._opportunity_targets_sig = None
+
+    def _on_opportunity_target_change(self, *_args):
+        """A target row changed: the score rows and Goals read the weights, not
+        these, so only this popup's own state has to be refreshed."""
+        self._opportunity_targets_sig = None
+
+    def _opportunity_auto_target(self, group: str) -> int:
+        """What the automatic rule would count for one group, right now.
+
+        The statewide shares are a sum over the demographic columns, so they
+        are cached against the loaded arrays rather than recomputed per frame.
+        """
+        runner = getattr(self, "runner", None)
+        vap = getattr(runner, "vap_data", None) if runner is not None else None
+        if not vap:
+            return 0
+        if getattr(self, "_opportunity_share_for", None) != id(vap["total"]):
+            total = float(np.asarray(vap["total"], dtype=np.float64).sum())
+            self._opportunity_share_for = id(vap["total"])
+            self._opportunity_shares = {
+                g: (float(np.asarray(vap[g], dtype=np.float64).sum()) / total
+                    if total > 0.0 else 0.0)
+                for g in GROUPS}
+        k = int(dpg.get_value(self._num_districts))
+        return int(round(self._opportunity_shares.get(group, 0.0) * k))
+
+    def _opportunity_target_value(self, group: str) -> int:
+        """The ScoreConfig value for one group: -1 for automatic."""
+        if dpg.get_value(self._opportunity_target_auto[group]):
+            return -1
+        k = int(dpg.get_value(self._num_districts))
+        return max(0, min(k, int(dpg.get_value(
+            self._opportunity_target_count[group]))))
+
+    def _reset_opportunity_targets(self) -> None:
+        """Back to automatic for every group. A target is a count of districts
+        on one map's demographics; it means nothing on the next file."""
+        for group in GROUPS:
+            dpg.set_value(self._opportunity_target_auto[group], True)
+            dpg.set_value(self._opportunity_target_count[group], 0)
+        self._opportunity_share_for = None
+        self._opportunity_targets_sig = None
+
+    def _clamp_opportunity_targets(self, n_districts: int) -> None:
+        """Keep every manual target inside the district count. Called with the
+        other district-count-dependent sliders, not only while the popup is
+        open, so a config captured with it closed is still in range."""
+        for group in GROUPS:
+            field = self._opportunity_target_count[group]
+            dpg.configure_item(field, max_value=max(0, n_districts))
+            if dpg.get_value(field) > n_districts:
+                dpg.set_value(field, max(0, n_districts))
+                self._opportunity_targets_sig = None
+
+    def _sync_opportunity_target_rows(self) -> None:
+        """Refresh the rows: which groups are shown, what Automatic counts, and
+        whether the number is editable. Behind a signature, like every other
+        per-frame refresh."""
+        provided = self.state.race_groups_provided
+        auto = {g: self._opportunity_auto_target(g) for g in GROUPS}
+        manual = {g: not dpg.get_value(self._opportunity_target_auto[g])
+                  for g in GROUPS}
+        sig = (tuple(provided), tuple(auto.items()), tuple(manual.items()))
+        if sig == self._opportunity_targets_sig:
+            return
+        self._opportunity_targets_sig = sig
+        for group in GROUPS:
+            shown = bool(provided) and group in provided
+            dpg.configure_item(self._opportunity_target_rows[group], show=shown)
+            dpg.configure_item(self._opportunity_target_auto[group],
+                               label=f"Automatic ({auto[group]})")
+            dpg.configure_item(self._opportunity_target_count[group],
+                               enabled=manual[group])
 
     def _build_help_popup(self):
         # Fixed-size reader: the doc text scrolls inside its own child_window,
