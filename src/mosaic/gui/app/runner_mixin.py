@@ -135,6 +135,10 @@ class RunnerMixin:
 
         if not self._capture_run_settings():
             return
+        # The whole configuration this run is about to use, kept so it can be
+        # found again later. Saved after the settings validate, so a run that
+        # could not start leaves no snapshot.
+        self._save_history_snapshot("run")
         # The chain starts from exactly what was just captured, so there is no
         # edit outstanding against it.
         self._reweight_seen = None

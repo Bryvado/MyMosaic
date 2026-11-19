@@ -467,6 +467,11 @@ class IOMixin:
             self._show_hot_start_error(f"Unexpected error: {e}")
             return
 
+        # Where it came from, for the configuration history: the loaded data
+        # keeps the file's name but not the path or the columns it was read
+        # with, and a restore needs all three.
+        self._hot_start_source = {"path": str(path), "id_col": str(csv_id_col),
+                                  "district_col": str(csv_district_col)}
         self._install_hot_start(assignment, info)
 
     def _install_hot_start(self, assignment, info):
@@ -516,6 +521,7 @@ class IOMixin:
         with self.state._lock:
             if self.state.best_assignment is None:
                 self.state.run_locked_districts = ()
+        self._hot_start_source = None
         self._update_hot_start_display(None)
         self._refresh_hot_start_window()
 
@@ -795,6 +801,10 @@ class IOMixin:
             return
 
         self.runner.alignment_data = data
+        # As for the starting plan: AlignmentData keeps the file's name, not
+        # the path and columns a restore would have to read it with again.
+        self._alignment_source = {"path": str(path), "id_col": str(csv_id_col),
+                                  "district_col": str(csv_district_col)}
         # Plan Continuity is gated on a reference plan existing; one does now.
         dpg.configure_item(self._alignment_enabled, enabled=True)
         self._scores_sig = None
@@ -816,6 +826,7 @@ class IOMixin:
         self._on_alignment_toggle()
 
     def _on_clear_alignment(self):
+        self._alignment_source = None
         if self.runner is not None:
             self.runner.alignment_data = None
         dpg.configure_item(self._alignment_enabled, enabled=False)
@@ -961,6 +972,7 @@ class IOMixin:
             return
         if self._wait_for_workers(lambda: self._begin_open_shapefile(path, config)):
             return
+        self._drop_stale_restore(path)
         self._on_reset()
         self._clear_file_state()
         self._pending_recent_config = config

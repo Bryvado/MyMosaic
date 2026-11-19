@@ -66,6 +66,12 @@ def app(display, tmp_path_factory):
     application._save_place_unit = lambda: None
     application._save_map_style = lambda: None
     application._save_visuals = lambda: None
+    # ... and out of the user's configuration history, which the app would
+    # otherwise write to on every Start and on close. Pointed somewhere
+    # temporary before the first frame, so the "restore last session" offer
+    # finds an empty history and stays away.
+    from mosaic.session_history import HistoryStore
+    application.history = HistoryStore(tmp_path_factory.mktemp("history"))
     # No test reaches the network: the tile store fails as if offline unless a
     # test swaps in its own.
     application._basemap_store = _offline_store(tmp_path_factory.mktemp("tiles"))

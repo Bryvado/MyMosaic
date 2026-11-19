@@ -130,19 +130,37 @@ class MenuMixin:
         except Exception:
             pass
 
+    @staticmethod
+    def _shapefile_config_json(config: "ShapefileConfig") -> dict:
+        """A column selection as JSON. One serialiser, used by the recent-files
+        list and by the configuration history."""
+        return {
+            "pop_col":    config.pop_col,
+            "id_col":     config.id_col,
+            "county_col": config.county_col,
+            "elections":  [list(e) for e in (config.elections or ())],
+            "demographics": config.demographics,
+        }
+
+    @staticmethod
+    def _shapefile_config_from_json(data: dict) -> "ShapefileConfig":
+        """The inverse. Election pairs come back as the tuples
+        ShapefileConfig expects, and a short or malformed pair is dropped."""
+        data = data if isinstance(data, dict) else {}
+        elections = [tuple(e) for e in (data.get("elections") or ())
+                     if isinstance(e, (list, tuple)) and len(e) == 2]
+        return ShapefileConfig(
+            pop_col=data.get("pop_col", ""),
+            id_col=data.get("id_col", ""),
+            county_col=data.get("county_col"),
+            elections=elections,
+            demographics=data.get("demographics") or None,
+        )
+
     def _push_recent_shapefile(self, path: str,
                                config: "ShapefileConfig") -> None:
         """Prepend path+config to the recent list, cap it, refresh menu."""
-        entry = {
-            "path": path,
-            "config": {
-                "pop_col":    config.pop_col,
-                "id_col":     config.id_col,
-                "county_col": config.county_col,
-                "elections":  config.elections,
-                "demographics": config.demographics,
-            },
-        }
+        entry = {"path": path, "config": self._shapefile_config_json(config)}
         self._recent_shapefiles = [
             e for e in self._recent_shapefiles if e.get("path") != path
         ]
@@ -182,18 +200,7 @@ class MenuMixin:
             self.state.update(
                 status_message=f"Recent file not found: {path}")
             return
-        cfg_d = entry.get("config", {})
-        # Normalize stored election pairs to ShapefileConfig's tuple format.
-        raw_elections = cfg_d.get("elections", [])
-        elections = [tuple(e) for e in raw_elections if len(e) == 2]
-        demographics = cfg_d.get("demographics") or None
-        config = ShapefileConfig(
-            pop_col=cfg_d.get("pop_col", ""),
-            id_col=cfg_d.get("id_col", ""),
-            county_col=cfg_d.get("county_col"),
-            elections=elections,
-            demographics=demographics,
-        )
+        config = self._shapefile_config_from_json(entry.get("config", {}))
         self._request_open_shapefile(path, config)
 
     def _plan_unsaved(self) -> bool:
@@ -561,13 +568,16 @@ class MenuMixin:
     def _on_save_preset(self) -> None:
         self._pick_preset_path(True, self._save_preset_to)
 
-    def _save_preset_to(self, path: str) -> None:
+    def _save_preset_to(self, path: str, preset: dict | None = None) -> None:
+        """Write a preset file: the live widgets, or a preset handed in (the
+        History window saves a snapshot's scores this way)."""
         from mosaic.presets import write_preset
         p = Path(path)
         if p.suffix.lower() != ".toml":
             p = p.with_suffix(".toml")
         try:
-            write_preset(p, self._preset_from_widgets())
+            write_preset(p, preset if preset is not None
+                         else self._preset_from_widgets())
         except Exception as e:
             self.state.update(status_message=f"Could not save preset: {e}")
             return
