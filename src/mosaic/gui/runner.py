@@ -46,6 +46,7 @@ from mosaic.scoring.minority_cohesion import (
     precompute_minority_cohesion_data,
 )
 from mosaic.scoring.opportunity import (
+    config_targets,
     opportunity_targets,
     precompute_opportunity_coords,
     warm_opportunity_geo,
@@ -666,6 +667,7 @@ class AlgorithmRunner:
                 solid=score_config.opportunity_solid,
                 coords=self.opportunity_coords if _smart else None,
                 smart_targets=_smart,
+                targets=config_targets(score_config),
             )
             if _smart:
                 self.state.update(status_message="Computing smart targets...")
@@ -678,9 +680,13 @@ class AlgorithmRunner:
             # per-iteration ratings.
             _targets = opportunity_targets(self.vap_data, num_districts, **_geo_kw)
             self.state.opportunity_targets = _targets
+            # A manual target is a statement that the group is to be scored,
+            # so it stands in for the heuristic gate here as it does in the
+            # score itself.
             self._set_race_applicable(
                 "representation",
-                any(t["target"] >= 1 and t["feasible"] for t in _targets.values()),
+                any(t["target"] >= 1 and (t["feasible"] or t["manual"])
+                    for t in _targets.values()),
             )
 
         _skw = self.score_kwargs(num_districts, tolerance, score_config)
@@ -692,7 +698,8 @@ class AlgorithmRunner:
                 self.vap_data, num_districts, score_config.opportunity_midpoint,
                 score_config.opportunity_steepness, score_config.opportunity_solid,
                 coords=self.opportunity_coords,
-                smart_targets=score_config.opportunity_smart_targets)
+                smart_targets=score_config.opportunity_smart_targets,
+                targets=config_targets(score_config))
 
         # ── Tolerance Ratchet setup ──────────────────────────────────────────
         # active_tolerance starts at the user's map-wide tolerance and only ever

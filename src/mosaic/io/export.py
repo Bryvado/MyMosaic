@@ -69,6 +69,7 @@ def save_metrics(
     opportunity_midpoint: float = 0.44,
     opportunity_steepness: float = 0.05,
     opportunity_solid: float = 0.55,
+    opportunity_targets: dict | None = None,
 ) -> None:
     """Save per-district metrics to CSV.
 
@@ -83,6 +84,10 @@ def save_metrics(
       With pp+reock:    holistic_compactness
       With vap_data:    demographic_total, and per group in race_groups,
                         <group>_pop, <group>_pct, <group>_opportunity
+
+    ``opportunity_targets`` carries the scorer's manual targets so the whole
+    opportunity configuration travels together. A district's credit is its own
+    group share on the curve, so the targets do not change these columns.
 
     ``race_groups`` names the groups the user actually gave a column for;
     unselected groups are zero-filled upstream, so without it a group with no
@@ -233,6 +238,7 @@ def save_metrics(
                 steepness=opportunity_steepness,
                 solid=opportunity_solid,
                 groups=groups,
+                targets=opportunity_targets,
             ) if groups else {}
         except Exception as exc:
             raise ValueError(f"Opportunity calculation failed: {exc}") from exc

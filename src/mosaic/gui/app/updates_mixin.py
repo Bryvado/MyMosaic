@@ -160,12 +160,21 @@ def _opportunity_target_lines(targets: dict,
             out.append((f"{name}: no column loaded", "disabled_deep"))
             continue
         drawable = int(round(t.get("ceiling", 0.0)))
-        if int(t.get("target", 0)) < 1:
-            out.append((f"{name}: reference below 1 district", "disabled_deep"))
+        manual = bool(t.get("manual", False))
+        counted = int(t.get("target", 0))
+        note = f", {counted} counted by hand" if manual else ""
+        if counted < 1:
+            out.append(((f"{name}: left out by hand" if manual
+                         else f"{name}: reference below 1 district"),
+                        "disabled_deep"))
         elif not t.get("feasible", 0) or drawable < 1:
-            out.append((f"{name}: no local reference found", "disabled_deep"))
+            # A manual target is scored whatever the heuristic found, so say
+            # the group is counted rather than dropped.
+            out.append(((f"{name}: no local reference found{note}" if manual
+                         else f"{name}: no local reference found"),
+                        "body" if manual else "disabled_deep"))
         else:
-            out.append((f"{name}: {drawable}-district reference", "body"))
+            out.append((f"{name}: {drawable}-district reference{note}", "body"))
     return out
 
 
@@ -565,6 +574,7 @@ class UpdatesMixin:
         # Keep district-count-dependent sliders bounded
         n_dist_val = dpg.get_value(self._num_districts)
         dpg.configure_item(self._hinge_threshold,  max_value=n_dist_val)
+        self._clamp_opportunity_targets(n_dist_val)
 
         # ── Button states ─────────────────────────────────────────────────────
         # Scores stay editable during a run: a change applies to the next run,
@@ -844,9 +854,12 @@ class UpdatesMixin:
                     target = self.state.opportunity_targets.get(group, {})
                     provided = self.state.race_groups_provided
                     value = int(round(target.get("ceiling", 0.0)))
+                    # A manual target stands in for the heuristic gate, the
+                    # same rule the score itself applies.
                     applicable = ((not provided or group in provided)
                                   and target.get("target", 0) >= 1
-                                  and bool(target.get("feasible", False)))
+                                  and bool(target.get("feasible", False)
+                                           or target.get("manual", False)))
                     if applicable:
                         active_groups.add(group)
                     dpg.configure_item(f"representation_{group}_series",
@@ -902,6 +915,7 @@ class UpdatesMixin:
                                 hi = max(hi, max(_b.plot_data(limit)[1]))
                         dpg.set_axis_limits("representation_y", 0.0, hi + max(0.1, hi * 0.05))
         if dpg.is_item_shown("popup_representation"):
+            self._sync_opportunity_target_rows()
             # Targets are run-constant, so rebuild the text only when they change
             # rather than every frame the popup happens to be open.
             _tg = self.state.opportunity_targets

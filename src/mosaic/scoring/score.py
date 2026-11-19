@@ -28,7 +28,7 @@ from mosaic.scoring.holistic_competitiveness import holistic_competitiveness_fro
 from mosaic.scoring.holistic_proportionality import holistic_proportionality_from_shares
 from mosaic.scoring.holistic_splitting import score_holistic_splitting
 from mosaic.scoring.minority_cohesion import score_minority_cohesion
-from mosaic.scoring.opportunity import compute_opportunity
+from mosaic.scoring.opportunity import compute_opportunity, config_targets
 from mosaic.scoring.partisan import (
     _EG_SWING_SIGMA,
     build_p_wins_matrix,
@@ -104,6 +104,13 @@ class ScoreConfig:
     opportunity_steepness: float = 0.05      # logistic scale
     opportunity_solid: float = 0.55          # solid-majority share = one full opportunity district
     opportunity_smart_targets: bool = True   # local-pool feasibility + ceiling
+    # Manual opportunity targets: how many districts each group is scored over.
+    # -1 = automatic, i.e. the proportional benchmark rounded. With few
+    # districts that rounding decides whether a group is scored at all, so the
+    # number can be named instead; 0 excludes the group.
+    opportunity_target_black: int = -1
+    opportunity_target_latino: int = -1
+    opportunity_target_asian: int = -1
 
 
 @dataclass
@@ -487,6 +494,7 @@ def score_plan(
             solid=config.opportunity_solid,
             coords=opportunity_coords,
             smart_targets=config.opportunity_smart_targets,
+            targets=config_targets(config),
             _prepared=_opportunity_prep,
         )
         rep_rating, rep_pen, _rr, _reff = representation_from_opportunity(

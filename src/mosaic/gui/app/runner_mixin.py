@@ -310,6 +310,9 @@ class RunnerMixin:
             opportunity_solid=dpg.get_value(self._opportunity_solid),
             opportunity_smart_targets=dpg.get_value(
                 self._opportunity_smart_targets),
+            opportunity_target_black=self._opportunity_target_value("black"),
+            opportunity_target_latino=self._opportunity_target_value("latino"),
+            opportunity_target_asian=self._opportunity_target_value("asian"),
             weight_minority_cohesion=w_mincoh,
             weight_community_congruence=w_cmtycong,
         )
