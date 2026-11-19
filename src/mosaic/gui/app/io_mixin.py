@@ -339,6 +339,13 @@ class IOMixin:
             dpg.delete_item("__hot_start_file_dialog")
         from mosaic.paths import mosaic_data_dir
         default_path = str(mosaic_data_dir())
+        # Start from Plan is a modal dialog and this picker cannot be one, so
+        # the picker would open underneath it and take no clicks. Hide it for
+        # as long as the picker is up; both ways out put it back, the chosen
+        # path before the column picker writes to the window's own widgets.
+        self._hot_start_window_hidden = self._hide_modal_for_picker(
+            "hot_start_window")
+
         with dpg.file_dialog(
             directory_selector=False,
             show=True,
@@ -349,10 +356,8 @@ class IOMixin:
             # modal, and those matter more than dimming the background
             # behind a transient picker. See _pick_alignment_dpg.
             modal=False,
-            callback=lambda s, d: self._show_hot_start_column_picker(
-                d.get("file_path_name", "") if isinstance(d, dict) else ""
-            ),
-            cancel_callback=lambda *_: None,
+            callback=self._on_hot_start_file_chosen,
+            cancel_callback=self._on_hot_start_file_cancelled,
             default_path=default_path,
             width=700,
             height=450,
@@ -362,10 +367,30 @@ class IOMixin:
             dpg.add_file_extension(".csv", color=(120, 220, 120, 255))
             dpg.add_file_extension(".*")
 
+    def _on_hot_start_file_chosen(self, _sender, app_data) -> None:
+        """A starting-plan CSV was picked: put Start from Plan back, then read
+        the file's columns into it."""
+        self._on_hot_start_file_cancelled()
+        path = (app_data.get("file_path_name", "")
+                if isinstance(app_data, dict) else "")
+        self._show_hot_start_column_picker(path)
+
+    def _on_hot_start_file_cancelled(self, *_args) -> None:
+        """The picker is gone either way, so Start from Plan comes back."""
+        self._restore_modal_after_picker(
+            "hot_start_window", getattr(self, "_hot_start_window_hidden", False))
+        self._hot_start_window_hidden = False
+
     def _show_hot_start_column_picker(self, path: str) -> None:
         if self._queue_session_action(self._show_hot_start_column_picker, path):
             return
-        if not self._hot_start_editable() or not dpg.does_item_exist("hot_start_window"):
+        # The columns are written into Start from Plan's own widgets, so there
+        # is nothing to show if that window has been closed -- or is still
+        # hidden behind a picker, which is why the picker's callbacks put it
+        # back before they get here.
+        if (not self._hot_start_editable()
+                or not dpg.does_item_exist("hot_start_window")
+                or not dpg.is_item_shown("hot_start_window")):
             return
         log.info(f"Starting plan: column picker invoked with path={path!r}")
         if not path:
