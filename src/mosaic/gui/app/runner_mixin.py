@@ -30,7 +30,8 @@ class RunnerMixin:
         return self._pending_session_action is not None
 
     def _session_workers(self):
-        return (self.algorithm_thread, self._data_thread, self._map_load_thread)
+        return (self.algorithm_thread, self._data_thread, self._map_load_thread,
+                getattr(self, "_calib_thread", None))
 
     def _session_workers_busy(self):
         return (getattr(self, "_saving", False)
@@ -48,6 +49,7 @@ class RunnerMixin:
             return True
         if self._session_workers_busy():
             self.state.request_stop()
+            self._cancel_calibration()
             self._pending_session_action = action
             self.state.update(status_message="Waiting for current work to stop...")
             return True

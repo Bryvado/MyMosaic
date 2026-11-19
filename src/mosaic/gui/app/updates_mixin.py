@@ -354,6 +354,10 @@ class UpdatesMixin:
             self.state.update(gdf_ready=False)
             self._update_shp_info_label()
             self._sync_tolerance_people()
+            # A calibration already measured for this file, district count and
+            # tolerance is good as it stands; reopening a map should not ask
+            # for the same seconds twice.
+            self._load_cached_calibration()
             # Mark this gdf as fully populated (all overlay arrays present) so
             # the map bg-load below may load it. complete_load sets gdf +
             # populations + county + elections + pp before pulsing gdf_ready,
@@ -567,7 +571,9 @@ class UpdatesMixin:
         # since the running config is frozen at start.
         self._sync_seed_controls()
         self._sync_preset_controls()
+        self._tick_calibration()
         self._sync_goals_panel()
+        self._sync_calibration_row()
         self._sync_ensemble_controls()
         # One primary action, whichever it is now. Start is unavailable only
         # while partitioning, since Pause and Resume share this button.

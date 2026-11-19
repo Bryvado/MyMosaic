@@ -8,15 +8,20 @@ rewrite the sections one goal owns, push the result back through the same
 a goal's strength is read back out of the weights rather than stored, so the
 two directions cannot drift apart.
 """
+import hashlib
 import json
+import threading
+from pathlib import Path
 
 from mosaic import goals as G
+from mosaic.paths import cache_dir
 
 from ._common import (
     _CONTRIB_BAR_METRICS,
     _CONTRIB_METRIC_SECTION,
     _GOAL_ORDER,
     _SETTINGS_DIR,
+    AlgorithmStatus,
     dpg,
     log,
 )
@@ -26,6 +31,13 @@ from ._common import (
 _LADDER_ITEMS = tuple(name for name, _x in G.LADDER)
 _CUSTOM = "Custom"
 _PLACE_UNIT_FILE = _SETTINGS_DIR / "place_unit.json"
+# Measured reference tables, keyed by map and run settings (see
+# _calibration_key). Lives beside the graph and geometry caches because it is
+# the same kind of thing: minutes of computation that only depends on the file.
+_CALIB_FILE = "goal_calibration.json"
+_CALIB_MAX = 24          # entries kept; the oldest are dropped
+_CALIB_PLANS = 3         # fresh plans measured per calibration
+_CALIB_DEFAULT_NOTE = "Calibrated for the North Carolina sample (default)"
 
 # Data a goal needs, phrased for the gap line. _PRESET_NEEDS supplies which
 # need applies to which score, so only the wording lives here.
@@ -101,6 +113,7 @@ class GoalsMixin:
                                               show=False)
         for gid in _GOAL_ORDER:
             self._build_goal_row(G.GOALS_BY_ID[gid])
+        self._build_calibration_row()
         self._build_goal_starters_popup()
         self._build_goal_tune_popup()
 
@@ -205,6 +218,297 @@ class GoalsMixin:
             self._tooltip(row["focus"],
                           "Whose continuity Plan Continuity measures: everyone, "
                           "or one party's voters.")
+
+    # ── Calibration ───────────────────────────────────────────────────────────
+    # A strength is a contribution budget divided by a reference penalty, and
+    # the shipped references were measured on one map. Measuring the loaded
+    # map's own penalties is what makes "Strong" mean the same thing here as
+    # it does there. See mosaic.calibration for the measurement itself.
+
+    def _build_calibration_row(self) -> None:
+        """The calibrate button and the one line that says what is in force."""
+        self._calib_ref = None          # the Reference now in force, if measured
+        self._calib_key = None          # the key it was measured for
+        self._calib_pending = None      # worker result, read on the frame thread
+        self._calib_thread = None
+        # Its own cancel flag, not SharedState's stop: that one stays set while
+        # the app is idle (Reset and opening a map both raise it), which would
+        # cancel every measurement before its first plan.
+        self._calib_cancel = threading.Event()
+        self._calib_sig = None
+        dpg.add_spacer(height=4)
+        dpg.add_separator()
+        self._calib_btn = dpg.add_button(label="Calibrate to this map",
+                                         width=-1, callback=self._on_calibrate)
+        dpg.bind_item_theme(self._calib_btn, self.theme.antinudge_theme)
+        self._tooltip(
+            self._calib_btn,
+            "Measure this map's own penalties so each strength carries the "
+            f"influence its name promises. Builds {_CALIB_PLANS} fresh plans; "
+            "the words stay, the weights move.")
+        self._calib_note = self.theme.text(_CALIB_DEFAULT_NOTE, "muted", wrap=0)
+
+    def _calibration_key(self) -> tuple | None:
+        """What a measurement depends on, or None before a map is loaded.
+
+        The reference penalties follow the map, the district count and the
+        tolerance -- a 20-district plan cuts fewer edges per district than a
+        14-district one -- and the columns, because which scores can be
+        measured at all depends on them. Everything else the measurement uses
+        is a ScoreConfig default, deliberately, so nothing outside this key
+        can change the answer.
+        """
+        if self.runner is None or self.runner.gdf is None:
+            return None
+        path = self.state.shapefile_path
+        if not path:
+            return None
+        try:
+            mtime = Path(path).stat().st_mtime_ns
+        except OSError:
+            mtime = 0
+        cfg = self._loaded_config
+        cols = ()
+        if cfg is not None:
+            cols = (cfg.pop_col, cfg.id_col, cfg.county_col,
+                    tuple(tuple(e) for e in (cfg.elections or ())),
+                    tuple(sorted((getattr(cfg, "demographics", None) or {}).items())))
+        return (path, mtime, int(dpg.get_value(self._num_districts)),
+                round(dpg.get_value(self._tolerance) / 100.0, 6), cols)
+
+    def _calibration_busy(self) -> bool:
+        """Is a measurement running right now?"""
+        thread = self._calib_thread
+        return thread is not None and thread.is_alive()
+
+    def _calibration_blocked(self) -> str:
+        """Why calibration cannot start now, or "" when it can.
+
+        A measurement scores plans with the runner's own precompute, which a
+        run and a batch are both using; it also takes seconds, which is not
+        something to do to a chain in flight.
+        """
+        if self.runner is None or self.runner.gdf is None:
+            return "Open a map before calibrating."
+        if self._ensemble_active:
+            return "Finish or stop the Batch Runs before calibrating."
+        if self.state.status in (AlgorithmStatus.RUNNING, AlgorithmStatus.PAUSED,
+                                 AlgorithmStatus.PARTITIONING):
+            return "Stop the run before calibrating."
+        if self._calibration_busy():
+            return "Already calibrating."
+        if self._session_action_pending() or self._session_workers_busy():
+            return "Wait for the current work to finish, then try again."
+        if int(dpg.get_value(self._num_districts)) < 2:
+            return "Choose at least two districts before calibrating."
+        return ""
+
+    def _on_calibrate(self) -> None:
+        """Measure this map on a worker thread; the frame loop picks it up."""
+        if self._queue_session_action(self._on_calibrate):
+            return
+        blocked = self._calibration_blocked()
+        if blocked:
+            self.state.update(status_message=blocked)
+            return
+        key = self._calibration_key()
+        if key is None:
+            return
+        n_dist, tol = key[2], key[3]
+        self._calib_cancel.clear()
+        self._calib_pending = None
+        self._calib_sig = None
+        self.state.update(
+            status_message=f"Calibrating goals: scoring {_CALIB_PLANS} fresh plans...")
+
+        def work() -> None:
+            from mosaic.calibration import Cancelled, measure_reference_penalties
+            try:
+                ref = measure_reference_penalties(
+                    self.runner, n_dist, tol, n_plans=_CALIB_PLANS,
+                    on_progress=lambda done, total: self.state.update(
+                        status_message=f"Calibrating goals: plan {done} of {total}..."),
+                    should_cancel=self._calib_cancel.is_set)
+            except Cancelled:
+                # Opening a map, Reset and Start all ask the workers to stop;
+                # a cancelled measurement is not a failure to report as one.
+                self._calib_pending = ("cancelled", "")
+                return
+            except Exception as exc:            # reported, never silent
+                log.exception("Calibration failed")
+                self._calib_pending = ("error", f"{type(exc).__name__}: {exc}")
+                return
+            self._calib_pending = ("ok", (key, ref))
+
+        self._calib_thread = threading.Thread(target=work, daemon=True,
+                                              name="calibrate")
+        self._calib_thread.start()
+
+    def _tick_calibration(self) -> None:
+        """Install a finished measurement. Called once per frame."""
+        pending = self._calib_pending
+        if pending is None:
+            return
+        self._calib_pending = None
+        kind, payload = pending
+        if kind == "cancelled":
+            self.state.update(status_message="Calibration cancelled.")
+            return
+        if kind == "error":
+            self.state.update(status_message=f"Calibration failed: {payload}")
+            return
+        key, ref = payload
+        current = self._calibration_key()
+        if current is None or current[0] != key[0]:
+            # A different file is open now: the table was measured on the old
+            # map's penalties and says nothing about this one.
+            return
+        self._install_calibration(key, ref)
+        self._save_calibration(key, ref)
+        self.state.update(
+            status_message=f"Goals calibrated for {ref.source}.")
+
+    def _install_calibration(self, key: tuple, ref) -> None:
+        """Put a measured table in force, keeping every goal's word.
+
+        The strengths are read before the table changes and written back after
+        it, which is the whole point: a goal set to Strong stays Strong and its
+        weights move to whatever Strong means on this map. A goal reading as
+        Custom is left alone -- its weights were set by hand, so there is no
+        word to preserve and no reason to overwrite them.
+        """
+        states = G.goal_states(self._preset_from_widgets())
+        words = {gid: s.strength for gid, s in states.items() if s.exact and s.on}
+        G.set_reference(ref.refs, ref.source)
+        self._calib_ref = ref
+        self._calib_key = key
+        self._calib_sig = None
+        self._goals_sig = None
+        self._contrib_sig = None
+        self._goal_snap_frame = -1
+        if words:
+            opts = {**self._goal_opts("favor_party"),
+                    **self._goal_opts("continuity")}
+            self._apply_goal_preset(
+                G.apply_goals(self._preset_from_widgets(), words, **opts))
+
+    def _cancel_calibration(self) -> None:
+        """Ask a running measurement to stop. Anything that waits for the
+        workers calls this, so Start, Reset and opening a map are not held up
+        by a measurement they have made irrelevant."""
+        if self._calibration_busy():
+            self._calib_cancel.set()
+
+    def _reset_calibration(self) -> None:
+        """Back to the shipped table. Called when the shapefile changes: the
+        references belong to one map, and keeping them for the next one would
+        be worse than the default, which at least says where it came from."""
+        self._cancel_calibration()
+        G.reset_reference()
+        self._calib_ref = None
+        self._calib_key = None
+        self._calib_pending = None
+        self._calib_sig = None
+        self._goals_sig = None
+        self._contrib_sig = None
+        self._goal_snap_frame = -1
+
+    # ── Cache ─────────────────────────────────────────────────────────────────
+
+    def _calibration_cache_path(self) -> "Path":
+        return cache_dir() / _CALIB_FILE
+
+    @staticmethod
+    def _calibration_hash(key: tuple) -> str:
+        """A short stable name for a key, so the file is a flat dict."""
+        text = json.dumps(key, default=str, sort_keys=True)
+        return hashlib.sha1(text.encode("utf-8")).hexdigest()[:16]
+
+    def _read_calibration_file(self) -> dict:
+        try:
+            data = json.loads(self._calibration_cache_path().read_text(
+                encoding="utf-8"))
+        except Exception:
+            return {}
+        return data if isinstance(data, dict) else {}
+
+    def _save_calibration(self, key: tuple, ref) -> None:
+        """Store one measurement. A corrupt or unwritable cache is not worth
+        an error: the measurement is already in force either way."""
+        entries = self._read_calibration_file()
+        entries[self._calibration_hash(key)] = {
+            "refs": {k: float(v) for k, v in ref.refs.items()},
+            "raw": {k: float(v) for k, v in ref.raw.items()},
+            "measured": list(ref.measured),
+            "num_districts": int(ref.num_districts),
+            "tolerance": float(ref.tolerance),
+            "n_plans": int(ref.n_plans),
+        }
+        for stale in list(entries)[:max(0, len(entries) - _CALIB_MAX)]:
+            entries.pop(stale, None)
+        try:
+            path = self._calibration_cache_path()
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(entries, indent=1), encoding="utf-8")
+        except Exception:
+            log.debug("Could not write the calibration cache", exc_info=True)
+
+    def _load_cached_calibration(self) -> None:
+        """Install a stored measurement for the current key, if there is one.
+
+        Called once after a shapefile finishes loading, so reopening a map the
+        user has already calibrated does not ask them to wait again.
+        """
+        key = self._calibration_key()
+        if key is None:
+            return
+        entry = self._read_calibration_file().get(self._calibration_hash(key))
+        if not isinstance(entry, dict):
+            return
+        from mosaic.calibration import Reference
+        try:
+            ref = Reference(
+                refs={str(k): float(v) for k, v in entry["refs"].items()},
+                raw={str(k): float(v) for k, v in entry.get("raw", {}).items()},
+                measured=tuple(entry.get("measured", ())),
+                num_districts=int(entry["num_districts"]),
+                tolerance=float(entry["tolerance"]),
+                n_plans=int(entry.get("n_plans", 0)))
+            self._install_calibration(key, ref)
+        except Exception:
+            log.debug("Ignoring an unreadable calibration cache entry",
+                      exc_info=True)
+            return
+        log.info("Loaded a cached goal calibration for %s", ref.source)
+
+    # ── The line under the button ─────────────────────────────────────────────
+
+    def _calibration_note(self) -> tuple[str, str]:
+        """(text, theme token) for the line under the calibrate button."""
+        if self._calibration_busy():
+            return "Calibrating to this map...", "muted"
+        if self._calib_ref is None:
+            return _CALIB_DEFAULT_NOTE, "muted"
+        text = f"Calibrated for {self._calib_ref.source}"
+        key = self._calibration_key()
+        if key is not None and self._calib_key is not None \
+                and key != self._calib_key:
+            return f"{text} - no longer matches these settings", "warning"
+        return text, "muted"
+
+    def _sync_calibration_row(self) -> None:
+        """Refresh the button and the line. One signature per frame when
+        nothing has changed, like every other row in this column."""
+        blocked = self._calibration_blocked()
+        text, token = self._calibration_note()
+        sig = (bool(blocked), text, token)
+        if sig == self._calib_sig:
+            return
+        self._calib_sig = sig
+        dpg.configure_item(self._calib_btn, enabled=not blocked)
+        if dpg.get_value(self._calib_note) != text:
+            dpg.set_value(self._calib_note, text)
+        self.theme.retoken(self._calib_note, token)
 
     # ── Edits out: goal -> score widgets ──────────────────────────────────────
 
