@@ -80,6 +80,9 @@ class ExportMixin:
             return
         self.state.update(status_message=f"Assignments saved to {output_path}")
         self._saved_plan = current.copy()   # mark the plan clean for the unsaved-changes guard
+        # The history lists what each run produced; the snapshot was taken
+        # when that run started, so the file is noted against it now.
+        self._record_assignment_csv(output_path)
 
     def _on_export_metrics(self):
         if self._ensemble_active:
