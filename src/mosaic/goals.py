@@ -34,6 +34,13 @@ and each weight is derived from it:
 ``_REF`` holds the reference penalties (see the table below for provenance) and
 each goal's ``share`` splits its budget among its scores. One word therefore
 means roughly one amount of influence on the total, whichever goal it is set on.
+
+``_REF`` is measured on one map, so it is only roughly right on another: a
+state with twice the precincts cuts about twice the edges. ``set_reference``
+replaces it with a table measured on the loaded map (``mosaic.calibration``
+does the measuring), and every weight derived from then on uses that one, so a
+strength means the same thing wherever it is set. ``reset_reference`` goes back
+to the shipped figures.
 """
 
 from __future__ import annotations
@@ -158,6 +165,81 @@ _REF: dict[str, float] = {
 # Weights live on sliders that drag to 100; a custom weight may exceed that in
 # a hand-written preset, but nothing this module computes does.
 _W_MAX = 100.0
+
+# ── The table in force ───────────────────────────────────────────────────────
+# _REF above is the default: the North Carolina sample's figures, which are
+# only roughly right for any other map. `mosaic.calibration` measures the
+# loaded map's own penalties and installs them here, and every read of a
+# reference -- _weight on the way out, _ref_for on the way back -- goes
+# through the active table rather than _REF, so one call moves both directions
+# at once. The default stays untouched so reset_reference can restore it.
+_ACTIVE_REF: dict[str, float] = dict(_REF)
+# Free text naming where the active table came from, for the panel to show.
+# Empty means the default table.
+_REF_SOURCE: str = ""
+
+# Smallest reference any table may hold, for a key no goal drives. A reference
+# divides a budget, so a measurement that came back at or near zero -- a fair
+# -mode metric on a plan that happens to start symmetric -- would otherwise
+# produce enormous weights.
+_REF_FLOOR = 1.0
+
+
+def default_reference() -> dict[str, float]:
+    """A copy of the shipped table, measured on the North Carolina sample."""
+    return dict(_REF)
+
+
+def active_reference() -> dict[str, float]:
+    """A copy of the table weights are currently derived from."""
+    return dict(_ACTIVE_REF)
+
+
+def reference_source() -> str:
+    """Where the active table came from, or "" while it is the default."""
+    return _REF_SOURCE
+
+
+def set_reference(refs: dict[str, float], source: str = "") -> None:
+    """Derive weights from ``refs`` from now on, naming where they came from.
+
+    Keys missing from ``refs`` keep their default: a score this map cannot
+    measure has nothing to say about it, and the shipped figure is a better
+    guess than a zero. Unknown keys are a programming error, not a silent
+    no-op, so they raise.
+    """
+    unknown = sorted(set(refs) - set(_REF))
+    if unknown:
+        raise ValueError(f"not reference keys: {', '.join(unknown)}")
+    table = dict(_REF)
+    for key, value in refs.items():
+        x = float(value)
+        if not math.isfinite(x) or x <= 0.0:
+            raise ValueError(f"reference {key} must be positive, got {value!r}")
+        table[key] = x
+    global _ACTIVE_REF, _REF_SOURCE
+    _ACTIVE_REF = table
+    _REF_SOURCE = str(source)
+
+
+def reset_reference() -> None:
+    """Go back to the shipped table."""
+    global _ACTIVE_REF, _REF_SOURCE
+    _ACTIVE_REF = dict(_REF)
+    _REF_SOURCE = ""
+
+
+def min_reference(ref: str) -> float:
+    """The smallest value ``ref`` may take without costing a goal its top step.
+
+    A weight is ``budget * share / reference`` and the sliders drag to _W_MAX,
+    so a reference below ``_BUDGET[Dominant] * share / _W_MAX`` would clamp
+    Dominant and leave two words setting the same weights. Where several goals
+    share a reference the largest share decides.
+    """
+    shares = [gs.share for g in GOALS for gs in g.scores if gs.ref == ref]
+    need = _BUDGET[_ANCHORS[-1]] * max(shares, default=0.0) / _W_MAX
+    return max(_REF_FLOOR, need)
 
 
 # The place unit Mosaic's "county" column holds. The column keeps its name, but
@@ -439,7 +521,7 @@ def _weight(gs: GoalScore, budget: float) -> float:
     """
     if budget <= 0.0:
         return 0.0
-    raw = budget * gs.share / _REF[gs.ref]
+    raw = budget * gs.share / _ACTIVE_REF[gs.ref]
     if _is_float_key(gs.section, gs.key):
         return min(_W_MAX, max(0.1, round(raw, 1)))
     return min(_W_MAX, float(max(1, int(round(raw)))))
@@ -563,8 +645,8 @@ def _ref_for(preset: dict[str, dict[str, Any]], gs: GoalScore) -> float:
     if gs.ref.endswith(("_fair", "_favor")):
         mode = preset.get(gs.section, {}).get("mode", "fair")
         stem = gs.ref.rsplit("_", 1)[0]
-        return _REF[f"{stem}_" + ("fair" if mode == "fair" else "favor")]
-    return _REF[gs.ref]
+        return _ACTIVE_REF[f"{stem}_" + ("fair" if mode == "fair" else "favor")]
+    return _ACTIVE_REF[gs.ref]
 
 
 def _active_scores(preset: dict[str, dict[str, Any]], goal: Goal

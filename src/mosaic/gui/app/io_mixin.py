@@ -945,6 +945,10 @@ class IOMixin:
         self._sync_tolerance_people()
         self._loaded_config = None
         self._has_elections = False
+        # The goal calibration was measured on the previous map's penalties, so
+        # it says nothing about this one: back to the shipped table until the
+        # cache or the user supplies one for the new file.
+        self._reset_calibration()
         # Drop the map fill immediately so no stale overlay from the previous
         # file is visible while the new one loads. _sync_fill_availability
         # relabels the combo once the new file's data is known.
