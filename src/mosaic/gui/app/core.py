@@ -97,6 +97,13 @@ class MosaicApp(*INTERNAL_MIXINS, *_APP_MIXINS):
         # Recent shapefiles (path + column config), loaded from disk in setup()
         self._recent_shapefiles: list = []   # [{"path": str, "config": dict}]
         self._recent_presets: list = []      # preset file paths, newest first
+        # Tags of the modal dialogs on screen to watch for; see
+        # _modal_dialog_shown. _dialog adds its own as it builds them; the
+        # column dialog is its own class (gui/shp_dialog.py) and is seeded
+        # here. A test holds this list to every modal window the app creates.
+        self._modal_dialogs: set = {"shp_dialog"}
+        # Whether Start from Plan was hidden to let its file picker be seen.
+        self._hot_start_window_hidden = False
         # Live reweighting: the last ScoreConfig seen on the controls, the one
         # already published to the running chain, and when the current edit
         # started. See RunnerMixin._tick_live_reweight.
@@ -284,6 +291,11 @@ class MosaicApp(*INTERNAL_MIXINS, *_APP_MIXINS):
         ``configure_item(tag, show=False)`` for build-once dialogs, or
         ``delete_item(tag)`` for transient ones)."""
         w, h = size
+        if modal:
+            # Every modal dialog in the app is built here, so this is the one
+            # list of them: _modal_dialog_shown reads it instead of walking
+            # the whole item tree.
+            self._modal_dialogs.add(tag)
         if dpg.does_item_exist(tag):
             dpg.delete_item(tag)
         win_kwargs = dict(label=title, tag=tag, modal=modal, no_close=True,
@@ -301,6 +313,52 @@ class MosaicApp(*INTERNAL_MIXINS, *_APP_MIXINS):
             yield
             self._dialog_footer(w, primary=primary, secondary=secondary,
                                 buttons=buttons)
+
+    # ── Modal dialogs and file pickers ────────────────────────────────────────
+    # Dear PyGui draws a modal window above every non-modal one, whatever the
+    # focus order, and a file dialog is a non-modal window (it cannot be modal
+    # here: in Dear PyGui 2.3 a modal opened after a modal file dialog is
+    # dismissed on creation, which is why the pickers pass modal=False -- see
+    # _pick_alignment_dpg). A picker opened from inside a modal dialog
+    # therefore appears *underneath* it and cannot be clicked. The dialog is
+    # taken off screen for as long as the picker is up, and put back before
+    # whatever the picker leads to.
+
+    def _modal_dialog_shown(self) -> bool:
+        """Is any modal dialog on screen?
+
+        Keyboard shortcuts are global in Dear PyGui -- a key handler fires
+        whatever has focus -- so Ctrl+O would otherwise open the shapefile
+        picker underneath an open modal dialog, the same way Choose CSV... did.
+        A modal is meant to be answered first, so the shortcuts stand down
+        while one is up.
+        """
+        return any(dpg.does_item_exist(tag) and dpg.is_item_shown(tag)
+                   for tag in self._modal_dialogs)
+
+    def _hide_modal_for_picker(self, tag: str) -> bool:
+        """Take a modal dialog off screen before opening a file picker.
+
+        Returns whether it was hidden, which the caller hands back to
+        ``_restore_modal_after_picker`` so a dialog that was not up is not
+        made to appear.
+        """
+        if dpg.does_item_exist(tag) and dpg.is_item_shown(tag):
+            dpg.configure_item(tag, show=False)
+            return True
+        return False
+
+    def _restore_modal_after_picker(self, tag: str, hidden: bool) -> None:
+        """Put the dialog back, before anything the picker leads to runs.
+
+        Both the picker's callback and its cancel_callback call this, so the
+        dialog comes back whether a file was chosen or not. Steps that follow
+        check that their own dialog is up before writing to its widgets, so
+        this has to happen first.
+        """
+        if hidden and dpg.does_item_exist(tag):
+            dpg.configure_item(tag, show=True)
+            dpg.focus_item(tag)
 
     @staticmethod
     def _dialog_btn_w(label: str) -> int:

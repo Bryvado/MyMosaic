@@ -1178,7 +1178,9 @@ class UpdatesMixin:
         # ── Keyboard shortcuts (Ctrl+N/O/S/W) ─────────────────────────────────
         _ctrl = (dpg.is_key_down(dpg.mvKey_LControl)
                  or dpg.is_key_down(dpg.mvKey_RControl))
-        if _ctrl:
+        # Not while a modal dialog is up: these shortcuts open pickers and
+        # windows that would land underneath it (see _modal_dialog_shown).
+        if _ctrl and not self._modal_dialog_shown():
             if dpg.is_key_pressed(dpg.mvKey_N):
                 self._on_new()
             elif dpg.is_key_pressed(dpg.mvKey_O):
