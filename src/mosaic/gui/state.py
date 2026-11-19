@@ -55,6 +55,13 @@ class SharedState:
 
     # Score config (set by GUI before run)
     score_config: ScoreConfig = field(default_factory=ScoreConfig)
+    # A config the interface wants the running chain to switch to. The run
+    # takes it at the top of an iteration, re-scores on the new weights and
+    # carries on; see AlgorithmRunner.run_algorithm. None = nothing pending.
+    pending_score_config: Optional[ScoreConfig] = None
+    # How many times the running chain has been reweighted. A reweighted run is
+    # no longer reproducible from its seed, so this is worth showing.
+    reweight_count: int = 0
 
     # Annealing config (set by GUI before run)
     annealing_config: AnnealingConfig = field(default_factory=AnnealingConfig)
@@ -203,6 +210,8 @@ class SharedState:
             self.accepted_worse = 0
             self.rejected_worse = 0
             self.history.reset()
+            self.pending_score_config = None
+            self.reweight_count = 0
             self.opportunity_targets = {}
             self.race_score_applicable = {}
             self.score_breakdown = {}
@@ -221,6 +230,28 @@ class SharedState:
             self.error_message = ""
             self.start_time = 0.0
             self.end_time = 0.0
+
+    def take_control(self) -> tuple[bool, bool, Optional[ScoreConfig]]:
+        """The stop flag, the pause flag and any pending reweight, at once.
+
+        One acquisition for all three, because the run asks for them together
+        at the top of every iteration. The pending config is handed over and
+        cleared, so a reweight is applied exactly once however often this is
+        called.
+        """
+        with self._lock:
+            pending = self.pending_score_config
+            self.pending_score_config = None
+            return self.should_stop, self.should_pause, pending
+
+    def request_reweight(self, score_config: ScoreConfig) -> None:
+        """Ask the running chain to switch to ``score_config``.
+
+        Replaces anything not yet taken: only the newest config matters, which
+        is what lets the interface publish on every edit.
+        """
+        with self._lock:
+            self.pending_score_config = score_config
 
     def request_stop(self) -> None:
         with self._lock:

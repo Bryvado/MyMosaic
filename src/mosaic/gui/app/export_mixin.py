@@ -3,6 +3,7 @@ from mosaic import basemap as B
 from mosaic.gui.layout import blend_fill
 from mosaic.gui.map_style import KINDS, default_colors
 from mosaic.gui.map_view import county_split_masks
+from mosaic.scoring.opportunity import config_targets
 
 from ._common import (
     _ASSETS_DIR,
@@ -124,6 +125,7 @@ class ExportMixin:
                 opportunity_midpoint=cfg.opportunity_midpoint,
                 opportunity_steepness=cfg.opportunity_steepness,
                 opportunity_solid=cfg.opportunity_solid,
+                opportunity_targets=config_targets(cfg),
             )
         except Exception as exc:
             self.state.update(status_message=f"Metrics export failed: {exc}")

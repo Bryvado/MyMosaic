@@ -1,4 +1,6 @@
 """Batch Runs tool: repeat full runs until a count or duration is reached."""
+from mosaic.scoring.opportunity import config_targets
+
 from ._common import (
     _DIALOG_GAP,
     _DIALOG_PAD,
@@ -382,6 +384,12 @@ class EnsembleMixin:
                                     if s.score_config.weight_hinge else None),
                 "hinge_party": ((("D" if s.score_config.hinge_dem else "R"))
                                 if s.score_config.weight_hinge else None),
+                # The manual opportunity targets sit outside presets too, and
+                # they decide how many districts each group was scored over.
+                "opportunity_targets": (
+                    {g: n for g, n in config_targets(s.score_config).items()
+                     if n >= 0} or None
+                    if s.score_config.weight_representation else None),
             },
             "run": {
                 "num_districts": s.num_districts,

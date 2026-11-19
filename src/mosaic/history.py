@@ -22,6 +22,10 @@ from collections.abc import Callable, Iterable, Mapping
 import numpy as np
 
 DEFAULT_CAPACITY = 200_000      # points per series
+# Reweight markers kept. One per deliberate edit during a run, so a few is the
+# normal case; the cap is only here so nothing in this module can grow without
+# a bound.
+_MAX_MARKS = 1024
 _NAN = math.nan
 
 
@@ -52,6 +56,10 @@ class RunHistory:
         # Series a chart or visual that is open needs even when its score is
         # off. Written by the interface, read by the run.
         self.extra: frozenset = frozenset()
+        # Iterations at which the run's scoring changed (see `reconfigure`).
+        # Charts draw a line at each one, so a reader can see that the series
+        # before and after it were not produced by the same objective.
+        self._marks: list[int] = []
 
     # ── Recording ────────────────────────────────────────────────────────────
 
@@ -64,6 +72,7 @@ class RunHistory:
         self._tail = None
         self._config = None
         self._keys_for = None
+        self._marks = []
 
     def due(self, iteration: int) -> bool:
         """Whether `iteration` is a recorded one at the current stride."""
@@ -116,6 +125,9 @@ class RunHistory:
                 self.n = keep
         if self._tail is not None and self._tail[0] > iteration:
             self._tail = None
+        # Reverting past a reweight unwinds it as far as the charts go: the
+        # marker would otherwise sit beyond the end of every series.
+        self._marks = [m for m in self._marks if m <= iteration]
         self.generation += 1
 
     # ── Reading ──────────────────────────────────────────────────────────────
@@ -191,6 +203,26 @@ class RunHistory:
         """Start a run: which scores are on decides what is recorded."""
         self.reset()
         self._config = score_config
+
+    def reconfigure(self, score_config, iteration: int) -> None:
+        """The run's scoring changed at `iteration`; keep recording from there.
+
+        `begin_run` decided which series to keep from the config it was given,
+        so a score switched on mid-run would otherwise go unrecorded for the
+        rest of the run. Recomputing `wanted` starts keeping the newly enabled
+        series from the next recorded point; `record` fills the iterations
+        before it with NaN, which charts as a gap rather than a false zero.
+        The iteration is kept as a marker for the charts.
+        """
+        self._config = score_config
+        self._keys_for = None               # `wanted` is recomputed on demand
+        if len(self._marks) < _MAX_MARKS and (
+                not self._marks or self._marks[-1] != int(iteration)):
+            self._marks.append(int(iteration))
+
+    def marks(self) -> tuple[int, ...]:
+        """Iterations at which the run was reweighted, oldest first."""
+        return tuple(self._marks)
 
     def tick(self, iteration: int, plan_score, temperature: float | None = None,
              accept_rate: Callable[[], float | None] | None = None) -> None:

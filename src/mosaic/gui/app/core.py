@@ -97,6 +97,15 @@ class MosaicApp(*INTERNAL_MIXINS, *_APP_MIXINS):
         # Recent shapefiles (path + column config), loaded from disk in setup()
         self._recent_shapefiles: list = []   # [{"path": str, "config": dict}]
         self._recent_presets: list = []      # preset file paths, newest first
+        # Live reweighting: the last ScoreConfig seen on the controls, the one
+        # already published to the running chain, and when the current edit
+        # started. See RunnerMixin._tick_live_reweight.
+        self._reweight_seen = None
+        self._reweight_published = None
+        self._reweight_at = 0.0
+        self._run_locked = None
+        # y-axis tag -> the reweight markers last drawn on that chart.
+        self._marks_drawn: dict = {}
         # Batch Runs tool: while active, run() refreshes only the batch window.
         self._ensemble_active = False
         self._workflow_blocks_main = False

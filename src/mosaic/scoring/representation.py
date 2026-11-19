@@ -1,16 +1,21 @@
 """Electoral Opportunity ratings and aggregate optimizer penalty.
 
-For each group, the scorer sums opportunity credit over the top
-``round(proportional_seats)`` districts and divides by the heuristic credit
-reference in ``OpportunityResult``. A per-group rating of 100 means that the
-selected districts meet or exceed that reference. Groups whose proportional
-target rounds below one district, or whose heuristic feasibility flag is zero,
-are marked not applicable and excluded from the aggregate.
+For each group, the scorer sums opportunity credit over the top ``target``
+districts and divides by the heuristic credit reference in
+``OpportunityResult``. A per-group rating of 100 means that the selected
+districts meet or exceed that reference. ``target`` is the proportional
+benchmark rounded to whole districts, or the number the user named for that
+group. Groups whose target is below one district, or whose heuristic
+feasibility flag is zero, are marked not applicable and excluded from the
+aggregate -- except that a manual target of one or more says the group is to
+be scored, so it is not subject to the feasibility gate.
 
-The optimizer penalty is the proportional-seat-weighted mean shortfall. In
-``unclipped`` mode, a soft per-district cap is used for the penalty while the
-display ratings remain hard-capped. Inputs are a demographic total and group
-counts from one consistent universe.
+The optimizer penalty is the proportional-seat-weighted mean shortfall; a
+group with a manual target is weighted by whichever is larger, its
+proportional seats or its target, so a group below half a seat still counts
+once someone has asked for it. In ``unclipped`` mode, a soft per-district cap
+is used for the penalty while the display ratings remain hard-capped. Inputs
+are a demographic total and group counts from one consistent universe.
 """
 
 from __future__ import annotations
@@ -71,9 +76,10 @@ def representation_from_opportunity(
     Returns:
         agg_rating -- T-weighted 0-100 (display only).
         penalty    -- 0-100, lower = better; the value the optimizer minimises.
-        ratings    -- {group: 0-100 or None}; None = <1 proportional seat or a
-                      zero heuristic feasibility flag; 100 = at or above the
-                      heuristic credit reference.
+        ratings    -- {group: 0-100 or None}; None = fewer than one counted
+                      district, or a zero heuristic feasibility flag with no
+                      manual target; 100 = at or above the heuristic credit
+                      reference.
         eff        -- {group: effective opportunity districts (top-target credit)}.
     """
     ratings: dict[str, float | None] = {}
@@ -83,13 +89,19 @@ def representation_from_opportunity(
     den = 0.0
     for g in GROUPS:
         T = opp.T[g]
-        target = int(round(T))
+        # The counted districts: round(T) by default, or the manual target.
+        target = int(opp.target.get(g, round(T)))
+        manual = bool(opp.manual.get(g, False))
         feas = opp.feasible.get(g)
         # N/A gate first (both conditions are run-constant): a group below one
-        # proportional seat or with a zero heuristic feasibility flag contributes
-        # nothing, so skip its per-district credit + sort entirely. eff (display
-        # only) is 0 -- an N/A group has no counted opportunity districts.
-        if target < 1 or feas == 0:
+        # counted district, or one the bundle heuristic found no qualifying
+        # bundle for, contributes nothing, so skip its per-district credit +
+        # sort entirely. eff (display only) is 0 -- an N/A group has no counted
+        # opportunity districts. A target set by hand overrides the heuristic:
+        # the heuristic does not enforce contiguity and is not a proof either
+        # way, so a person who has asked for two districts gets them scored.
+        # A manual 0 is how that person excludes the group.
+        if target < 1 or (feas == 0 and not manual):
             ratings[g] = None
             eff[g] = 0.0
             continue
@@ -113,9 +125,15 @@ def representation_from_opportunity(
             frac_pen = min(float(top_soft.sum()) / denom, 1.0)
         else:
             frac_pen = frac_disp
-        num_disp += T * frac_disp
-        num_pen += T * frac_pen
-        den += T
+        # Proportional seats weight the aggregate, so a large group's rating
+        # counts for more than a small one's. A manual target is weighted by
+        # whichever is larger: without this a group at 0.3 of a seat that
+        # someone asked to be scored would contribute almost nothing to the
+        # number the optimizer minimises.
+        weight = max(T, float(target)) if manual else T
+        num_disp += weight * frac_disp
+        num_pen += weight * frac_pen
+        den += weight
 
     agg_rating = 100.0 if den <= 0.0 else 100.0 * (num_disp / den)
     penalty = 0.0 if den <= 0.0 else 100.0 * (1.0 - num_pen / den)
