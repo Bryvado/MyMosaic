@@ -8,6 +8,7 @@ from ._common import (
     log,
     np,
     threading,
+    time,
     warnings,
 )
 
@@ -134,6 +135,11 @@ class RunnerMixin:
 
         if not self._capture_run_settings():
             return
+        # The chain starts from exactly what was just captured, so there is no
+        # edit outstanding against it.
+        self._reweight_seen = None
+        self._reweight_published = None
+        self._reweight_at = 0.0
         self._clear_all_series()
         self.state.reset_run()
 
@@ -141,6 +147,210 @@ class RunnerMixin:
             target=self.runner.run_algorithm, daemon=True, name="algo",
         )
         self.algorithm_thread.start()
+
+    # ── Live reweighting ──────────────────────────────────────────────────────
+    # A weight edited during a run used to do nothing until the next Start, so
+    # steering a chain meant throwing it away. The scoring controls were
+    # already editable mid-run (their edits simply waited); now the edit is
+    # published to the running chain, which re-scores on it and carries on.
+
+    # Seconds of quiet before an edit is published. A weight slider emits a
+    # callback per pixel of drag, and each publish costs the run a re-score of
+    # two plans, so the drag is allowed to finish first.
+    _REWEIGHT_DEBOUNCE = 0.3
+
+    # Settings a running chain cannot be handed. Each is frozen at run start --
+    # the partition, the RNG seeding, the move mix, the cooling schedule and
+    # the columns the scores read -- so changing one mid-run could not take
+    # effect without restarting the chain. They are disabled while a single
+    # run is in flight, so that "weights apply now" does not read as "anything
+    # applies now". The starting plan has its own gate (_hot_start_editable)
+    # and the column pickers are not reachable during a run.
+    _RUN_LOCKED_WIDGETS = (
+        "_num_districts", "_tolerance", "_tolerance_people",
+        "_tolerance_ratchet_mode", "_iterations", "_seed",
+        "_n3_pct", "_flip_enabled", "_flip_midpoint", "_fast_trees",
+        "_county_bias_enabled", "_county_bias",
+        "_ann_enabled", "_temp_factor", "_cool_mode", "_guide_frac",
+        "_target_temp", "_cooling_rate", "_launch_watch_enabled",
+        "_launch_watch_iter",
+    )
+
+    def _live_run_active(self) -> bool:
+        """Is one interactive run in flight, running or paused?
+
+        Batch Runs is excluded: its window disables the main columns and the
+        chain belongs to the batch, not to the controls on screen.
+        """
+        return (not self._ensemble_active
+                and not self._workflow_blocks_main
+                and self.state.status in (AlgorithmStatus.RUNNING,
+                                          AlgorithmStatus.PAUSED))
+
+    def _tick_live_reweight(self) -> None:
+        """Publish edited scoring to the running chain once the edits settle.
+
+        Polled here rather than hooked onto each control: about thirty widgets
+        feed a ScoreConfig, between the score rows, the Goals panel and four
+        settings popups, and a list of them would go stale the first time one
+        was added. Reading them costs nothing beyond a run, because this
+        returns at once unless a single run is in flight.
+        """
+        if not self._live_run_active():
+            self._reweight_seen = None
+            self._reweight_published = None
+            self._reweight_at = 0.0
+            return
+        config = self._build_score_config()
+        live = (self._reweight_published if self._reweight_published is not None
+                else self.state.score_config)
+        if config == live:
+            self._reweight_seen = None
+            self._reweight_at = 0.0
+            return
+        now = time.monotonic()
+        if config != self._reweight_seen:
+            # Still moving: start the clock again from this value.
+            self._reweight_seen = config
+            self._reweight_at = now
+            return
+        if now - self._reweight_at < self._REWEIGHT_DEBOUNCE:
+            return
+        self.state.request_reweight(config)
+        self._reweight_published = config
+        self._reweight_seen = None
+        self._reweight_at = 0.0
+
+    def _sync_run_locked_controls(self) -> None:
+        """Lock the settings a running chain cannot be handed; unlock after."""
+        locked = self._live_run_active()
+        if locked == getattr(self, "_run_locked", None):
+            return
+        self._run_locked = locked
+        for name in self._RUN_LOCKED_WIDGETS:
+            item = getattr(self, name, None)
+            if item and dpg.does_item_exist(item):
+                dpg.configure_item(item, enabled=not locked)
+        if not locked:
+            # The people slider has its own rule for when it can be used (a
+            # range narrower than one person cannot), so hand it back rather
+            # than leaving it enabled.
+            self._sync_tolerance_people()
+
+    def _build_score_config(self):
+        """Every scoring widget, read into one ScoreConfig.
+
+        Separated from the rest of the run settings because it is read twice:
+        once when a run starts, and again on every edit while one is running,
+        so the chain can be handed new weights without being restarted. The
+        widgets stay the single source of truth either way.
+        """
+        cs_on      = dpg.get_value(self._cs_enabled)
+        mm_on      = dpg.get_value(self._mm_enabled)
+        eg_on      = dpg.get_value(self._eg_enabled)
+        pb_on      = dpg.get_value(self._pb_enabled)
+        pg_on      = dpg.get_value(self._pg_enabled)
+        seats_on   = dpg.get_value(self._seats_enabled)
+        maj_on     = dpg.get_value(self._majority_enabled)
+        robust_eg = dpg.get_value(self._eg_mode) == "Robust (recommended)"
+
+        w_cut  = (dpg.get_value(self._w_cut_edges)
+                  if dpg.get_value(self._cut_enabled) else 0.0)
+        w_cs_excess  = dpg.get_value(self._w_county_excess)  if cs_on else 0.0
+        w_cs_unified = dpg.get_value(self._w_county_unified) if cs_on else 0.0
+        w_pp   = (dpg.get_value(self._w_polsby_popper)
+                  if dpg.get_value(self._pp_enabled) else 0.0)
+        w_reock = (dpg.get_value(self._w_reock)
+                   if dpg.get_value(self._reock_enabled) else 0.0)
+        w_hc   = (dpg.get_value(self._w_holistic_compactness)
+                  if dpg.get_value(self._hc_enabled) else 0.0)
+        w_hsplit = (dpg.get_value(self._w_holistic_splitting)
+                    if dpg.get_value(self._hsplit_enabled) else 0.0)
+        w_hprop = (dpg.get_value(self._w_holistic_proportionality)
+                   if dpg.get_value(self._hprop_enabled) else 0.0)
+        w_hcmp  = (dpg.get_value(self._w_holistic_competitiveness)
+                   if dpg.get_value(self._hcmp_enabled) else 0.0)
+        w_repr = (dpg.get_value(self._w_representation)
+                  if dpg.get_value(self._representation_enabled) else 0.0)
+        w_mincoh = (dpg.get_value(self._w_minority_cohesion)
+                    if dpg.get_value(self._minority_cohesion_enabled) else 0.0)
+        w_cmtycong = (dpg.get_value(self._w_community_congruence)
+                      if dpg.get_value(self._community_congruence_enabled) else 0.0)
+        w_pd   = (dpg.get_value(self._w_pop_deviation)
+                  if dpg.get_value(self._popdev_enabled) else 0.0)
+        # Plan Continuity only counts when enabled AND a reference plan is loaded.
+        _align_on = (dpg.get_value(self._alignment_enabled)
+                     and self.runner is not None
+                     and self.runner.alignment_data is not None)
+        w_align = dpg.get_value(self._w_alignment) if _align_on else 0.0
+        _align_focus = {
+            "All residents": "none", "Republican": "rep", "Democratic": "dem",
+        }[dpg.get_value(self._alignment_focus)]
+        # Safe harbor cannot exceed population tolerance
+        _tol    = dpg.get_value(self._tolerance) / 100.0
+        _harbor = min(dpg.get_value(self._pop_dev_harbor) / 100.0, _tol)
+
+        n_dist_run = dpg.get_value(self._num_districts)
+
+        return ScoreConfig(
+            weight_cut_edges=w_cut,
+            weight_county_excess=w_cs_excess,
+            weight_county_unified=w_cs_unified,
+            weight_holistic_splitting=w_hsplit,
+            holistic_splitting_unclipped=dpg.get_value(self._hsplit_unclipped),
+            weight_polsby_popper=w_pp,
+            weight_reock=w_reock,
+            weight_holistic_compactness=w_hc,
+            compactness_unclipped=dpg.get_value(self._hcompact_unclipped),
+            weight_pop_deviation=w_pd,
+            pop_deviation_safe_harbor=_harbor,
+            weight_alignment=w_align,
+            alignment_party_focus=_align_focus,
+            alignment_restrict_to_party=dpg.get_value(self._alignment_restrict),
+            alignment_win_threshold=dpg.get_value(self._alignment_win_threshold),
+            weight_mean_median=dpg.get_value(self._w_mean_median) if mm_on else 0.0,
+            mm_mode=_DIR_TO_MODE[dpg.get_value(self._mm_dir)],
+            mm_bound=dpg.get_value(self._mm_bound),
+            weight_efficiency_gap=dpg.get_value(self._w_efficiency_gap) if eg_on else 0.0,
+            eg_mode=_DIR_TO_MODE[dpg.get_value(self._eg_dir)],
+            eg_bound=dpg.get_value(self._eg_bound),
+            partisan_quadratic_penalty=dpg.get_value(self._partisan_quadratic_penalty),
+            use_robust_eg=robust_eg,
+            weight_partisan_bias=dpg.get_value(self._w_partisan_bias) if pb_on else 0.0,
+            pbias_mode=_DIR_TO_MODE[dpg.get_value(self._pb_dir)],
+            pbias_bound=dpg.get_value(self._pbias_bound),
+            weight_partisan_gini=dpg.get_value(self._w_partisan_gini) if pg_on else 0.0,
+            weight_dem_seats=dpg.get_value(self._w_dem_seats) if seats_on else 0.0,
+            dem_seats_favor_dem=(dpg.get_value(self._dem_seats_dir) == "D"),
+            weight_holistic_proportionality=w_hprop,
+            proportionality_unclipped=dpg.get_value(self._prop_unclipped),
+            weight_holistic_competitiveness=w_hcmp,
+            competitiveness_unclipped=dpg.get_value(self._comp_unclipped),
+            weight_majority_chance_dem=(dpg.get_value(self._w_majority)
+                                        if maj_on and dpg.get_value(self._majority_dem_chk)
+                                        else 0.0),
+            weight_majority_chance_rep=(dpg.get_value(self._w_majority)
+                                        if maj_on and dpg.get_value(self._majority_rep_chk)
+                                        else 0.0),
+            election_win_prob_at_55=dpg.get_value(self._win_prob),
+            election_swing_sigma=dpg.get_value(self._swing_sigma),
+            weight_hinge=(dpg.get_value(self._w_hinge)
+                          if dpg.get_value(self._hinge_enabled) else 0.0),
+            hinge_threshold=max(1, min(dpg.get_value(self._hinge_threshold), n_dist_run)),
+            hinge_dem=dpg.get_value(self._hinge_dem_chk),
+            weight_representation=w_repr,
+            representation_unclipped=dpg.get_value(self._representation_unclipped),
+            opportunity_midpoint=dpg.get_value(self._opportunity_midpoint),
+            opportunity_steepness=dpg.get_value(self._opportunity_steepness),
+            opportunity_solid=dpg.get_value(self._opportunity_solid),
+            opportunity_smart_targets=dpg.get_value(
+                self._opportunity_smart_targets),
+            opportunity_target_black=self._opportunity_target_value("black"),
+            opportunity_target_latino=self._opportunity_target_value("latino"),
+            opportunity_target_asian=self._opportunity_target_value("asian"),
+            weight_minority_cohesion=w_mincoh,
+            weight_community_congruence=w_cmtycong,
+        )
 
     def _capture_run_settings(self) -> bool:
         """Validate the starting plan and copy widget settings into shared state.
@@ -210,112 +420,10 @@ class RunnerMixin:
                         )
                         return False
 
-        cs_on      = dpg.get_value(self._cs_enabled)
-        mm_on      = dpg.get_value(self._mm_enabled)
-        eg_on      = dpg.get_value(self._eg_enabled)
-        pb_on      = dpg.get_value(self._pb_enabled)
-        pg_on      = dpg.get_value(self._pg_enabled)
-        seats_on   = dpg.get_value(self._seats_enabled)
-        maj_on     = dpg.get_value(self._majority_enabled)
-        robust_eg = dpg.get_value(self._eg_mode) == "Robust (recommended)"
-
-        w_cut  = (dpg.get_value(self._w_cut_edges)
-                  if dpg.get_value(self._cut_enabled) else 0.0)
-        w_cs_excess  = dpg.get_value(self._w_county_excess)  if cs_on else 0.0
-        w_cs_unified = dpg.get_value(self._w_county_unified) if cs_on else 0.0
-        w_pp   = (dpg.get_value(self._w_polsby_popper)
-                  if dpg.get_value(self._pp_enabled) else 0.0)
-        w_reock = (dpg.get_value(self._w_reock)
-                   if dpg.get_value(self._reock_enabled) else 0.0)
-        w_hc   = (dpg.get_value(self._w_holistic_compactness)
-                  if dpg.get_value(self._hc_enabled) else 0.0)
-        w_hsplit = (dpg.get_value(self._w_holistic_splitting)
-                    if dpg.get_value(self._hsplit_enabled) else 0.0)
-        w_hprop = (dpg.get_value(self._w_holistic_proportionality)
-                   if dpg.get_value(self._hprop_enabled) else 0.0)
-        w_hcmp  = (dpg.get_value(self._w_holistic_competitiveness)
-                   if dpg.get_value(self._hcmp_enabled) else 0.0)
-        w_repr = (dpg.get_value(self._w_representation)
-                  if dpg.get_value(self._representation_enabled) else 0.0)
-        w_mincoh = (dpg.get_value(self._w_minority_cohesion)
-                    if dpg.get_value(self._minority_cohesion_enabled) else 0.0)
-        w_cmtycong = (dpg.get_value(self._w_community_congruence)
-                      if dpg.get_value(self._community_congruence_enabled) else 0.0)
-        w_pd   = (dpg.get_value(self._w_pop_deviation)
-                  if dpg.get_value(self._popdev_enabled) else 0.0)
-        # Plan Continuity only counts when enabled AND a reference plan is loaded.
-        _align_on = (dpg.get_value(self._alignment_enabled)
-                     and self.runner is not None
-                     and self.runner.alignment_data is not None)
-        w_align = dpg.get_value(self._w_alignment) if _align_on else 0.0
-        _align_focus = {
-            "All residents": "none", "Republican": "rep", "Democratic": "dem",
-        }[dpg.get_value(self._alignment_focus)]
-        # Safe harbor cannot exceed population tolerance
-        _tol    = dpg.get_value(self._tolerance) / 100.0
-        _harbor = min(dpg.get_value(self._pop_dev_harbor) / 100.0, _tol)
-
-        n_dist_run = dpg.get_value(self._num_districts)
-
-        score_cfg = ScoreConfig(
-            weight_cut_edges=w_cut,
-            weight_county_excess=w_cs_excess,
-            weight_county_unified=w_cs_unified,
-            weight_holistic_splitting=w_hsplit,
-            holistic_splitting_unclipped=dpg.get_value(self._hsplit_unclipped),
-            weight_polsby_popper=w_pp,
-            weight_reock=w_reock,
-            weight_holistic_compactness=w_hc,
-            compactness_unclipped=dpg.get_value(self._hcompact_unclipped),
-            weight_pop_deviation=w_pd,
-            pop_deviation_safe_harbor=_harbor,
-            weight_alignment=w_align,
-            alignment_party_focus=_align_focus,
-            alignment_restrict_to_party=dpg.get_value(self._alignment_restrict),
-            alignment_win_threshold=dpg.get_value(self._alignment_win_threshold),
-            weight_mean_median=dpg.get_value(self._w_mean_median) if mm_on else 0.0,
-            mm_mode=_DIR_TO_MODE[dpg.get_value(self._mm_dir)],
-            mm_bound=dpg.get_value(self._mm_bound),
-            weight_efficiency_gap=dpg.get_value(self._w_efficiency_gap) if eg_on else 0.0,
-            eg_mode=_DIR_TO_MODE[dpg.get_value(self._eg_dir)],
-            eg_bound=dpg.get_value(self._eg_bound),
-            partisan_quadratic_penalty=dpg.get_value(self._partisan_quadratic_penalty),
-            use_robust_eg=robust_eg,
-            weight_partisan_bias=dpg.get_value(self._w_partisan_bias) if pb_on else 0.0,
-            pbias_mode=_DIR_TO_MODE[dpg.get_value(self._pb_dir)],
-            pbias_bound=dpg.get_value(self._pbias_bound),
-            weight_partisan_gini=dpg.get_value(self._w_partisan_gini) if pg_on else 0.0,
-            weight_dem_seats=dpg.get_value(self._w_dem_seats) if seats_on else 0.0,
-            dem_seats_favor_dem=(dpg.get_value(self._dem_seats_dir) == "D"),
-            weight_holistic_proportionality=w_hprop,
-            proportionality_unclipped=dpg.get_value(self._prop_unclipped),
-            weight_holistic_competitiveness=w_hcmp,
-            competitiveness_unclipped=dpg.get_value(self._comp_unclipped),
-            weight_majority_chance_dem=(dpg.get_value(self._w_majority)
-                                        if maj_on and dpg.get_value(self._majority_dem_chk)
-                                        else 0.0),
-            weight_majority_chance_rep=(dpg.get_value(self._w_majority)
-                                        if maj_on and dpg.get_value(self._majority_rep_chk)
-                                        else 0.0),
-            election_win_prob_at_55=dpg.get_value(self._win_prob),
-            election_swing_sigma=dpg.get_value(self._swing_sigma),
-            weight_hinge=(dpg.get_value(self._w_hinge)
-                          if dpg.get_value(self._hinge_enabled) else 0.0),
-            hinge_threshold=max(1, min(dpg.get_value(self._hinge_threshold), n_dist_run)),
-            hinge_dem=dpg.get_value(self._hinge_dem_chk),
-            weight_representation=w_repr,
-            representation_unclipped=dpg.get_value(self._representation_unclipped),
-            opportunity_midpoint=dpg.get_value(self._opportunity_midpoint),
-            opportunity_steepness=dpg.get_value(self._opportunity_steepness),
-            opportunity_solid=dpg.get_value(self._opportunity_solid),
-            opportunity_smart_targets=dpg.get_value(
-                self._opportunity_smart_targets),
-            opportunity_target_black=self._opportunity_target_value("black"),
-            opportunity_target_latino=self._opportunity_target_value("latino"),
-            opportunity_target_asian=self._opportunity_target_value("asian"),
-            weight_minority_cohesion=w_mincoh,
-            weight_community_congruence=w_cmtycong,
-        )
+        score_cfg = self._build_score_config()
+        # Read again here: the run settings below record the tolerance too, and
+        # the safe harbor inside the score config is capped against it.
+        _tol = dpg.get_value(self._tolerance) / 100.0
 
         guided = dpg.get_value(self._cool_mode) == "Guided (recommended)"
         ann_cfg = AnnealingConfig(

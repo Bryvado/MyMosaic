@@ -577,10 +577,13 @@ class UpdatesMixin:
         self._clamp_opportunity_targets(n_dist_val)
 
         # ── Button states ─────────────────────────────────────────────────────
-        # Scores stay editable during a run: a change applies to the next run,
-        # since the running config is frozen at start.
+        # Scores stay editable during a run, and a change now reaches the
+        # running chain: _tick_live_reweight publishes it once the edits
+        # settle. The settings a chain cannot be handed are locked instead.
         self._sync_seed_controls()
         self._sync_preset_controls()
+        self._sync_run_locked_controls()
+        self._tick_live_reweight()
         self._tick_calibration()
         self._sync_goals_panel()
         self._sync_calibration_row()
@@ -684,6 +687,8 @@ class UpdatesMixin:
             hist = self.state.history
             deltas = [hist.delta(key, buf.gen, buf.pos)
                       for buf, key, _fn in buffers]
+            # Iterations where the run's scoring changed, for the marker lines.
+            marks = hist.marks()
         for (buf, key, fn), update in zip(buffers, deltas, strict=True):
             buf.feed(update, fn=fn, drop_nan=key == H.ACCEPTANCE)
 
@@ -735,6 +740,7 @@ class UpdatesMixin:
             else:
                 xs, ys = buf.plot_data(limit)
             dpg.set_value(series_tag, [xs, ys])
+            self._draw_reweight_marks(y_tag, marks)
             dpg.fit_axis_data(x_tag)
             # Skip y-fit for axes locked to a fixed range (e.g. probability
             # axes [0, 100]) — otherwise fit_axis_data overrides the lock
@@ -1222,6 +1228,47 @@ class UpdatesMixin:
             with self.state._lock:
                 self.state.history.extra = need
 
+    def _reweight_line_theme(self):
+        """Theme for the reweight marker: one thin line in the separator
+        colour, which is this palette's quietest rule. Rebuilt after a theme
+        swap so the marker follows light and dark like everything else."""
+        name = self.theme.palette.name
+        if getattr(self, "_reweight_theme_for", None) != name:
+            with dpg.theme() as theme:
+                with dpg.theme_component(dpg.mvInfLineSeries):
+                    dpg.add_theme_color(dpg.mvPlotCol_Line,
+                                        self.theme.color("separator"),
+                                        category=dpg.mvThemeCat_Plots)
+                    dpg.add_theme_style(dpg.mvPlotStyleVar_LineWeight, 1.0,
+                                        category=dpg.mvThemeCat_Plots)
+            self._reweight_theme = theme
+            self._reweight_theme_for = name
+        return self._reweight_theme
+
+    def _draw_reweight_marks(self, y_tag: str, marks) -> None:
+        """A thin vertical line on one chart at each reweight.
+
+        The series before and after such a line were not produced by the same
+        objective, which is worth saying on the chart rather than only in the
+        log. Created on the chart's own axis the first time that chart is
+        drawn, so no panel builder has to know about it, and rewritten only
+        when the markers change.
+        """
+        if not marks and y_tag not in getattr(self, "_marks_drawn", {}):
+            return
+        drawn = self._marks_drawn
+        if drawn.get(y_tag) == marks:
+            return
+        tag = f"{y_tag}_reweight"
+        if not dpg.does_item_exist(tag):
+            if not dpg.does_item_exist(y_tag):
+                return
+            dpg.add_inf_line_series([], tag=tag, parent=y_tag,
+                                    label="##reweight")
+            dpg.bind_item_theme(tag, self._reweight_line_theme())
+        dpg.set_value(tag, [list(marks)])
+        drawn[y_tag] = marks
+
     def _clear_all_series(self) -> None:
         """Clear local history buffers and blank all DPG plot series."""
         for buf in (
@@ -1307,6 +1354,11 @@ class UpdatesMixin:
         for ax in ("representation_y", "community_congruence_y"):
             dpg.set_axis_limits(ax, 0.0, 100.0)
         dpg.set_axis_limits("minority_cohesion_y", -4.0, 104.0)
+        for tag in self._marks_drawn:
+            marker = f"{tag}_reweight"
+            if dpg.does_item_exist(marker):
+                dpg.set_value(marker, [[]])
+        self._marks_drawn = {}
         self._rep_mode = None
         self._phase_prev_n = 0
         self._phase_lim = None
