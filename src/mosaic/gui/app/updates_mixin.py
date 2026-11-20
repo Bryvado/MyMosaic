@@ -324,6 +324,11 @@ class UpdatesMixin:
         self._dist_info_last_iter = current_iter
 
     def _update_ui(self):
+        # Once, on the first frame: offering the last session from setup()
+        # would put a window on screen before there was one to put it on.
+        if self._history_offer_pending:
+            self._offer_restore_last_session()
+
         snap = self.state.get_all()
         status  = snap["status"]
         is_running      = status == AlgorithmStatus.RUNNING
@@ -367,6 +372,8 @@ class UpdatesMixin:
             # tolerance is good as it stands; reopening a map should not ask
             # for the same seconds twice.
             self._load_cached_calibration()
+            # A restore that was waiting for this map can finish now.
+            self._finish_pending_restore()
             # Mark this gdf as fully populated (all overlay arrays present) so
             # the map bg-load below may load it. complete_load sets gdf +
             # populations + county + elections + pp before pulsing gdf_ready,

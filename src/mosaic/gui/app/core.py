@@ -33,6 +33,7 @@ from .ensemble_roster_mixin import EnsembleRosterMixin
 from .ensemble_views_mixin import EnsembleViewsMixin
 from .export_mixin import ExportMixin
 from .goals_mixin import GoalsMixin
+from .history_mixin import HistoryMixin
 from .io_mixin import IOMixin
 from .map_mixin import MapMixin
 from .menu_mixin import MenuMixin
@@ -52,6 +53,7 @@ _APP_MIXINS = (
     BasemapMixin,
     VisualsMixin,
     GoalsMixin,
+    HistoryMixin,
     ScoresMixin,
     PopupsMixin,
     PanelsMixin,
@@ -102,6 +104,19 @@ class MosaicApp(*INTERNAL_MIXINS, *_APP_MIXINS):
         # column dialog is its own class (gui/shp_dialog.py) and is seeded
         # here. A test holds this list to every modal window the app creates.
         self._modal_dialogs: set = {"shp_dialog"}
+        # ── Configuration history (see history_mixin) ─────────────────────
+        self._history = None              # the store, made on first use
+        self._history_selected = ""       # the row the window has selected
+        self._history_sig = None          # what the list was last drawn from
+        self._history_offer_pending = True   # offer the last session, once
+        self._history_offer_id = ""
+        self._run_snapshot_id = ""        # the snapshot of the run in flight
+        self._pending_restore = None      # (path, config) waiting for its map
+        # Where the two plan files came from, which their loaded data does not
+        # keep: the history needs the path and the columns to read them again.
+        self._alignment_source = None
+        self._hot_start_source = None
+
         # Whether Start from Plan was hidden to let its file picker be seen.
         self._hot_start_window_hidden = False
         # Live reweighting: the last ScoreConfig seen on the controls, the one
@@ -434,6 +449,10 @@ class MosaicApp(*INTERNAL_MIXINS, *_APP_MIXINS):
             while dpg.is_dearpygui_running():
                 self.run_frame()
         finally:
+            # The configuration as it stands at the close, whichever way the
+            # app was closed. Identical to the last one saved (a run that was
+            # started and not changed since) is not stored again.
+            self._save_history_snapshot("exit")
             if self._ensemble_active:
                 with self._ens_progress.lock:
                     self._ens_progress.stop_requested = True

@@ -657,12 +657,18 @@ class MapMixin:
     # How the map looks on this machine. Not in presets: a preset is a scoring
     # recipe that travels between maps, and this is neither.
 
-    def _load_map_style(self) -> None:
-        import json
-        try:
-            data = json.loads(_MAP_STYLE_FILE.read_text(encoding="utf-8"))
-        except Exception:
-            return                      # missing or unreadable: keep defaults
+    def _map_style_payload(self) -> dict:
+        """The map's appearance as JSON: opacities, which basemap layers are
+        on, and the line widths and colours. One payload, written to the saved
+        style file and stored in a configuration snapshot."""
+        return {"fill_opacity": self._fill_opacity_value,
+                "fill_opacity_basemap": self._fill_opacity_basemap,
+                "basemap": dict(self._basemap_choice),
+                "lines": self._map_style.to_json()}
+
+    def _apply_map_style_payload(self, data) -> None:
+        """Take the appearance from such a payload. Anything missing or out of
+        range is left as it is, so a hand-edited file cannot break the map."""
         if not isinstance(data, dict):
             return
         for key, attr in (("fill_opacity", "_fill_opacity_value"),
@@ -678,15 +684,20 @@ class MapMixin:
         if self.map_view is not None:     # the map draws from this object
             self.map_view.style = self._map_style
 
+    def _load_map_style(self) -> None:
+        import json
+        try:
+            data = json.loads(_MAP_STYLE_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            return                      # missing or unreadable: keep defaults
+        self._apply_map_style_payload(data)
+
     def _save_map_style(self) -> None:
         import json
         try:
             _SETTINGS_DIR.mkdir(parents=True, exist_ok=True)
             _MAP_STYLE_FILE.write_text(
-                json.dumps({"fill_opacity": self._fill_opacity_value,
-                            "fill_opacity_basemap": self._fill_opacity_basemap,
-                            "basemap": self._basemap_choice,
-                            "lines": self._map_style.to_json()}, indent=2),
+                json.dumps(self._map_style_payload(), indent=2),
                 encoding="utf-8")
         except Exception:
             pass

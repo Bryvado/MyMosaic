@@ -185,6 +185,11 @@ class SetupMixin:
                                 label="(no recent files)", enabled=False,
                             )
                     dpg.add_separator()
+                    dpg.add_menu_item(
+                        label="History...",
+                        callback=self._on_open_history,
+                    )
+                    dpg.add_separator()
                     self._file_save_asgn_item = dpg.add_menu_item(
                         label="Save Assignments", shortcut="Ctrl+S",
                         enabled=False,
@@ -562,6 +567,14 @@ class SetupMixin:
                             dpg.add_button(label="Run details\u2026",
                                            callback=lambda: dpg.configure_item(
                                                "popup_run_details", show=True))
+                            self._history_btn = dpg.add_button(
+                                label="History\u2026",
+                                callback=self._on_open_history)
+                            self._tooltip(
+                                self._history_btn,
+                                "Every run and every close saves the whole "
+                                "configuration. Find an earlier one and put "
+                                "it back.")
                         dpg.add_separator()
                         self._build_result_tiles()
 
